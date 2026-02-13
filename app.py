@@ -971,7 +971,7 @@ def render_orders_page(services, user):
                                 'ai_order_id': '',
                                 'tracking_id': '',
                                 'courier_name': '',
-                                'created_by': user.get('name', user.get('email', '').split('@')[0]),
+                                'created_by': user.get('user_id'),
                                 'advance_screenshot': 'No',  # Removed checkbox
                                 'PICKUP LOCATION': '',  # Removed field
                                 'Remarks': '',  # Removed field
