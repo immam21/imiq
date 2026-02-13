@@ -800,17 +800,18 @@ def render_orders_page(services, user):
                 template_text = st.text_area("Order Template", value="", key="order_template_text")
                 extract_clicked = st.button("Extract from Template", key="extract_template_btn")
                 # Fields to extract
+                # Flexible template extraction: support multiple label variants, case-insensitive, optional #
                 template_fields = {
-                    "customer_name": "Customer Name",
-                    "phone": "Phone Number",
-                    "address": "Address",
-                    "city": "City",
-                    "pincode": "Pincode",
-                    "product": "Product Description",
-                    "balance_to_pay": "Balance to Pay",
-                    "advance_paid": "Advance Paid",
-                    "total": "Total Amount",
-                    "payment_method": "Payment Mode"
+                    "customer_name": [r"(?:#)?name", r"(?:#)?customer_name"],
+                    "phone": [r"(?:#)?phone", r"(?:#)?phone_number"],
+                    "address": [r"(?:#)?full_address", r"(?:#)?full address", r"address"],
+                    "city": [r"(?:#)?city"],
+                    "pincode": [r"(?:#)?pincode"],
+                    "product": [r"(?:#)?product_name", r"(?:#)?product name", r"product"],
+                    "balance_to_pay": [r"(?:#)?balance_to_pay", r"(?:#)?balance to pay", r"(?:#)?balance"],
+                    "advance_paid": [r"(?:#)?advance_paid", r"(?:#)?advance paid", r"(?:#)?advance"],
+                    "total": [r"(?:#)?total"],
+                    "payment_method": [r"(?:#)?payment_type", r"(?:#)?payment type"]
                 }
                 # Session state for extracted values
                 if "order_form_extracted" not in st.session_state:
@@ -818,11 +819,40 @@ def render_orders_page(services, user):
                 import re
                 if extract_clicked and template_text:
                     extracted = {}
-                    for key, label in template_fields.items():
-                        match = re.search(rf"{label}\s*:\s*(.+)", template_text, re.IGNORECASE)
-                        extracted[key] = match.group(1).strip() if match else ""
+                    debug_lines = []
+                    for key, patterns in template_fields.items():
+                        value = ""
+                        for pattern in patterns:
+                            match = re.search(rf"{pattern}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                            if match:
+                                value = match.group(1).strip()
+                                debug_lines.append(f"Matched {pattern} for {key}: {value}")
+                                break
+                        # Fallback: try exact field name (strip #, upper/lower)
+                        if not value:
+                            for line in template_text.splitlines():
+                                line_clean = line.strip()
+                                if line_clean.lower().startswith(f"#{key}".lower()):
+                                    parts = line_clean.split(":", 1)
+                                    if len(parts) == 2:
+                                        value = parts[1].strip()
+                                        debug_lines.append(f"Fallback matched #{key} for {key}: {value}")
+                                        break
+                        extracted[key] = value
                     st.session_state["order_form_extracted"] = extracted
+                    # Update session state for amounts if extracted
+                    try:
+                        st.session_state.balance_amount = float(extracted.get("balance_to_pay", "0") or "0")
+                    except ValueError:
+                        st.session_state.balance_amount = 0.0
+                    try:
+                        st.session_state.advance_amount = float(extracted.get("advance_paid", "0") or "0")
+                    except ValueError:
+                        st.session_state.advance_amount = 0.0
+                    st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+                    st.info("\n".join(debug_lines))
                     st.success("Fields extracted from template!")
+                    st.rerun()
                 # --- End Template Extraction UI ---
                 # Initialize session state for real-time calculations and order processing
                 if 'balance_amount' not in st.session_state:
@@ -833,41 +863,20 @@ def render_orders_page(services, user):
                     st.session_state.total_amount = 0.0
                 if 'creating_order' not in st.session_state:
                     st.session_state.creating_order = False
-                # Real-time amount calculation outside form
-                col_balance, col_advance, col_total = st.columns([1, 1, 1])
-                with col_balance:
-                    balance_input = st.text_input(
-                        "Balance to Pay *", 
-                        value=st.session_state["order_form_extracted"].get("balance_to_pay", str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else "0"),
-                        placeholder="0",
-                        key="balance_realtime",
-                        disabled=st.session_state.creating_order
-                    )
-                    try:
-                        st.session_state.balance_amount = float(balance_input) if balance_input and balance_input != "0" else 0.0
-                    except ValueError:
-                        st.session_state.balance_amount = 0.0
-                with col_advance:
-                    advance_input = st.text_input(
-                        "Advance Paid", 
-                        value=st.session_state["order_form_extracted"].get("advance_paid", str(st.session_state.advance_amount) if st.session_state.advance_amount != 0 else "0"),
-                        placeholder="0",
-                        key="advance_realtime",
-                        disabled=st.session_state.creating_order
-                    )
-                    try:
-                        st.session_state.advance_amount = float(advance_input) if advance_input and advance_input != "0" else 0.0
-                    except ValueError:
-                        st.session_state.advance_amount = 0.0
-                with col_total:
-                    st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
-                    st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
+                # ...existing code...
                 # Show loading spinner if creating order
                 if st.session_state.creating_order:
                     from imiq.ui_components import render_loading_spinner
                     render_loading_spinner("Creating your order... Please wait!")
                     return  # Don't show the form while processing
                 with st.form("create_order"):
+                    # --- Amount fields moved inside the form ---
+                    col_balance, col_advance, col_total = st.columns([1, 1, 1])
+                    extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+                    if extracted_balance is not None and extracted_balance != "":
+                        balance_default = str(extracted_balance)
+                    else:
+                        balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
                     # Row 1: Customer Name and Phone
                     st.markdown("#### 👤 Customer Information")
                     col1, col2 = st.columns(2)
@@ -887,38 +896,79 @@ def render_orders_page(services, user):
                         pincode = st.text_input("Pincode *", placeholder="123456 (6 digits)", value=st.session_state["order_form_extracted"].get("pincode", ""), disabled=st.session_state.creating_order)
                     with col6:
                         product = st.text_area("Product Description *", placeholder="Product details", height=100, value=st.session_state["order_form_extracted"].get("product", ""), disabled=st.session_state.creating_order)
+                    # --- Amount fields just above Payment Mode ---
+                    col_balance, col_advance, col_total = st.columns([1, 1, 1])
+                    extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+                    if extracted_balance is not None and extracted_balance != "":
+                        balance_default = str(extracted_balance)
+                    else:
+                        balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
+                    with col_balance:
+                        balance_input = st.text_input(
+                            "Balance to Pay *", 
+                            value=balance_default,
+                            placeholder="0",
+                            key="balance_realtime_input",
+                            disabled=st.session_state.creating_order
+                        )
+                    extracted_advance = st.session_state["order_form_extracted"].get("advance_paid", None)
+                    if extracted_advance is not None and extracted_advance != "":
+                        advance_default = str(extracted_advance)
+                    else:
+                        advance_default = str(st.session_state.advance_amount) if st.session_state.advance_amount != 0 else ""
+                    with col_advance:
+                        advance_input = st.text_input(
+                            "Advance Paid", 
+                            value=advance_default,
+                            placeholder="0",
+                            key="advance_realtime_input",
+                            disabled=st.session_state.creating_order
+                        )
+                    # Calculate and show total
+                    try:
+                        st.session_state.balance_amount = float(balance_input) if balance_input else 0.0
+                    except ValueError:
+                        st.session_state.balance_amount = 0.0
+                    try:
+                        st.session_state.advance_amount = float(advance_input) if advance_input else 0.0
+                    except ValueError:
+                        st.session_state.advance_amount = 0.0
+                    st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+                    with col_total:
+                        st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
                     # Row 4: Payment Mode
                     st.markdown("#### 💰 Payment Information")
                     payment_method = st.selectbox("Payment Mode *", ["COD", "Prepaid"], index=0 if st.session_state["order_form_extracted"].get("payment_method", "COD").upper() != "PREPAID" else 1, disabled=st.session_state.creating_order)
                     # Show current amounts in form (read-only display)
-                    col7, col8, col9 = st.columns(3)
-                    with col7:
-                        st.text_input("Balance to Pay (Current) *", value=f"₹{st.session_state.balance_amount:.2f}", disabled=True)
-                    with col8:
-                        st.text_input("Advance Paid (Current)", value=f"₹{st.session_state.advance_amount:.2f}", disabled=True)
-                    with col9:
-                        st.text_input("Total Amount (Current)", value=f"₹{st.session_state.total_amount:.2f}", disabled=True)
+                        # Removed duplicate read-only amount boxes
                     submitted = st.form_submit_button(
                         "🛒 Create Order", 
                         width='stretch', 
                         type="primary", 
                         disabled=st.session_state.creating_order or st.session_state.total_amount <= 0
                     )
-                        if success:
-                            st.success(f"✅ Order created successfully!")
-                            st.info(f"📦 Order ID: **{order_id}**")
-                            st.info(f"💰 Total Amount: **₹{total_amount:.2f}**")
-                            st.info(f"📱 Customer: **{customer_name}** ({phone})")
-                            # Reset amount session state
-                            st.session_state.balance_amount = 0.0
-                            st.session_state.advance_amount = 0.0
-                            st.session_state.total_amount = 0.0
-                            st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
-                            success_animation()
-                            # Auto refresh to clear form
-                            st.rerun()
+                    if submitted:
+                        # Set loading state
+                        st.session_state.creating_order = True
+                        # Get financial values from session state
+                        balance_to_pay = st.session_state.balance_amount
+                        advance_paid = st.session_state.advance_amount
+                        total_amount = st.session_state.total_amount
+                        # Validation
+                        required_fields = [customer_name, phone, address, city, pincode, product]
+                        if not all(required_fields) or balance_to_pay <= 0:
+                            st.session_state.creating_order = False
+                            st.error("❌ Please fill all required fields and ensure balance to pay is greater than 0")
                         else:
-                            st.error("❌ Failed to create order. Please try again.")
+                            try:
+                                # Generate order ID
+                                order_id = f"ORD{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
+                                # Show spinner while processing
+                                with st.spinner("Creating order..."):
+                                    # Prepare order data matching Excel schema
+                                    order_data = {
+                                        'order_id': order_id,
+                                        'phone': phone,
                                         'customer_name': customer_name,
                                         'product': product,
                                         'quantity': 1,  # Default quantity
@@ -961,28 +1011,6 @@ def render_orders_page(services, user):
                                 st.session_state.creating_order = False
                                 st.error(f"❌ Error creating order: {str(e)}")
                                 error_animation()
-                        if success:
-                            st.success(f"✅ Order created successfully!")
-                            st.info(f"📦 Order ID: **{order_id}**")
-                            st.info(f"💰 Total Amount: **₹{total_amount:.2f}**")
-                            st.info(f"📱 Customer: **{customer_name}** ({phone})")
-                            
-                            # Reset amount session state
-                            st.session_state.balance_amount = 0.0
-                            st.session_state.advance_amount = 0.0
-                            st.session_state.total_amount = 0.0
-                            
-                            success_animation()
-                            
-                            # Auto refresh to clear form
-                            st.rerun()
-                        else:
-                            st.error("❌ Failed to create order. Please try again.")
-                        
-                    except Exception as e:
-                        st.session_state.creating_order = False
-                        st.error(f"❌ Error creating order: {str(e)}")
-                        error_animation()
     
     with tab3:
         st.markdown("### Search Orders")
