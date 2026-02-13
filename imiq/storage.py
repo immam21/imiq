@@ -469,8 +469,10 @@ class GoogleSheetsStorage(StorageBase):
 
 def get_storage_instance(settings_service=None) -> StorageBase:
     """Factory function to get storage instance based on settings"""
+    import os
     import streamlit as st
     import json
+
     # Always prefer Google Sheets if secret is present
     if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
         try:
@@ -483,7 +485,6 @@ def get_storage_instance(settings_service=None) -> StorageBase:
                 'https://www.googleapis.com/auth/spreadsheets',
             ])
             gspread_client = gspread.authorize(creds)
-            # Get sheet_id from st.secrets or fallback to settings_service
             sheet_id = st.secrets.get('GOOGLE_SHEET_ID', '')
             if settings_service is not None and not sheet_id:
                 sheet_id = settings_service.get_setting('google_sheet_id', '')
@@ -492,9 +493,14 @@ def get_storage_instance(settings_service=None) -> StorageBase:
             logger.info(f"Initializing Google Sheets storage with Sheet ID: {sheet_id}")
             return GoogleSheetsStorage(sheet_id, gspread_client=gspread_client)
         except Exception as e:
-            logger.error(f"Error initializing Google Sheets storage: {e}. Falling back to Excel.")
-            return ExcelStorage()
-    # Fallback to Excel for local/dev
+            logger.error(f"Error initializing Google Sheets storage: {e}.")
+            raise
+
+    # If running on Streamlit Cloud, do NOT fallback to Excel
+    if os.environ.get('STREAMLIT_CLOUD') == '1':
+        raise RuntimeError("Google Sheets credentials not found in Streamlit secrets. Please configure secrets.")
+
+    # Fallback to Excel for local/dev only
     return ExcelStorage()
     
     try:
