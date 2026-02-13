@@ -477,21 +477,16 @@ def get_storage_instance(settings_service=None) -> StorageBase:
     if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
         try:
             info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
-            import gspread
-            from google.oauth2.service_account import Credentials
-            creds = Credentials.from_service_account_info(info, scopes=[
-                'https://spreadsheets.google.com/feeds',
-                'https://www.googleapis.com/auth/drive',
-                'https://www.googleapis.com/auth/spreadsheets',
-            ])
-            gspread_client = gspread.authorize(creds)
+            import os
+            # Set environment variable for downstream usage
+            os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'] = json.dumps(info)
             sheet_id = st.secrets.get('GOOGLE_SHEET_ID', '')
             if settings_service is not None and not sheet_id:
                 sheet_id = settings_service.get_setting('google_sheet_id', '')
             if not sheet_id:
                 raise ValueError("Google Sheets enabled but no Sheet ID provided.")
             logger.info(f"Initializing Google Sheets storage with Sheet ID: {sheet_id}")
-            return GoogleSheetsStorage(sheet_id, gspread_client=gspread_client)
+            return GoogleSheetsStorage(sheet_id)
         except Exception as e:
             logger.error(f"Error initializing Google Sheets storage: {e}.")
             raise
