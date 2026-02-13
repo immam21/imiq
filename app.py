@@ -349,24 +349,6 @@ def main():
                         create_order(order_data, user_id)
                         st.session_state["order_created"] = True
                         st.success("Order created successfully!")
-                    
-                    except ValueError as e:
-                        st.error(f"❌ {str(e)}")
-                    except Exception as e:
-                        st.error(f"❌ Error creating account: {str(e)}")
-                        error_animation()
-                        
-                        # Debug: Show detailed error information
-                        with st.expander("🔧 Debug Information"):
-                            st.write("Exception details:", str(e))
-                            try:
-                                # Check if storage is accessible
-                                users_df = services['auth'].storage.read_sheet("Users")
-                                st.write(f"Current users in database: {len(users_df)}")
-                                if hasattr(services['auth'].storage, 'file_path'):
-                                    st.write(f"Database path: {services['auth'].storage.file_path}")
-                            except Exception as debug_e:
-                                st.write(f"Storage debug error: {str(debug_e)}")
                 else:
                     st.warning("⚠️ Please fill in all required fields (Name, User ID, and Password)")
     
