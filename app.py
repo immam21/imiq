@@ -904,28 +904,21 @@ def render_orders_page(services, user):
                         type="primary", 
                         disabled=st.session_state.creating_order or st.session_state.total_amount <= 0
                     )
-                    if submitted:
-                        # Set loading state
-                        st.session_state.creating_order = True
-                        # Get financial values from session state
-                        balance_to_pay = st.session_state.balance_amount
-                        advance_paid = st.session_state.advance_amount
-                        total_amount = st.session_state.total_amount
-                        # Validation
-                        required_fields = [customer_name, phone, address, city, pincode, product]
-                        if not all(required_fields) or balance_to_pay <= 0:
-                            st.session_state.creating_order = False
-                            st.error("❌ Please fill all required fields and ensure balance to pay is greater than 0")
+                        if success:
+                            st.success(f"✅ Order created successfully!")
+                            st.info(f"📦 Order ID: **{order_id}**")
+                            st.info(f"💰 Total Amount: **₹{total_amount:.2f}**")
+                            st.info(f"📱 Customer: **{customer_name}** ({phone})")
+                            # Reset amount session state
+                            st.session_state.balance_amount = 0.0
+                            st.session_state.advance_amount = 0.0
+                            st.session_state.total_amount = 0.0
+                            st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
+                            success_animation()
+                            # Auto refresh to clear form
+                            st.rerun()
                         else:
-                            try:
-                                # Generate order ID
-                                order_id = f"ORD{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
-                                # Show spinner while processing
-                                with st.spinner("Creating order..."):
-                                    # Prepare order data matching Excel schema
-                                    order_data = {
-                                        'order_id': order_id,
-                                        'phone': phone,
+                            st.error("❌ Failed to create order. Please try again.")
                                         'customer_name': customer_name,
                                         'product': product,
                                         'quantity': 1,  # Default quantity
