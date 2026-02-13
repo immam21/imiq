@@ -306,29 +306,49 @@ def main():
                     st.warning("⚠️ Please enter both user ID and password")
         
         with tab2:
-            st.subheader("Create New Account")
-            
-            with st.form("signup_form"):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    signup_name = st.text_input("Full Name", placeholder="Enter your full name")
-                    signup_user_id = st.text_input("User ID", placeholder="unique_user_id")
-                
-                with col2:
-                    signup_password = st.text_input("Password", type="password", placeholder="Min 6 characters")
-                    st.text_input("Alignment placeholder", placeholder="", disabled=True, label_visibility="hidden")  # Placeholder for alignment
-                
-                st.info("💡 Your account will be created with 'user' role. Admin privileges can be granted separately.")
-                
-                signup_submitted = st.form_submit_button("Create Account", type="primary")
-            
-            if signup_submitted:
-                if all([signup_name, signup_user_id, signup_password]):
-                    try:
-                        if len(signup_password) < 6:
-                            st.error("❌ Password must be at least 6 characters long")
-                        else:
+            st.subheader("Create New Order")
+            # Template extraction UI
+            st.markdown("**Paste Order Template Below (optional):**")
+            template_text = st.text_area("Order Template", value="", key="order_template_text")
+            extract_clicked = st.button("Extract from Template", key="extract_template_btn")
+            # Order fields
+            order_fields = [
+                "Order ID",
+                "Customer Name",
+                "Product",
+                "Quantity",
+                "Price",
+                "Shipping Address",
+                "Order Date"
+            ]
+            # Session state for extracted values
+            if "extracted_order_data" not in st.session_state:
+                st.session_state["extracted_order_data"] = {field: "" for field in order_fields}
+            # Extraction logic
+            import re
+            if extract_clicked and template_text:
+                extracted = {}
+                for field in order_fields:
+                    # Regex: Field: value (case-insensitive)
+                    match = re.search(rf"{field}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                    extracted[field] = match.group(1).strip() if match else ""
+                st.session_state["extracted_order_data"] = extracted
+                st.success("Fields extracted from template!")
+            # Order form
+            with st.form("order_form"):
+                order_data = {}
+                for field in order_fields:
+                    default_val = st.session_state["extracted_order_data"].get(field, "")
+                    order_data[field] = st.text_input(field, value=default_val)
+                submitted = st.form_submit_button("Create Order")
+                if submitted:
+                    # Prevent duplicate order creation
+                    if st.session_state.get("order_created", False):
+                        st.warning("Order already created. Please refresh or create a new one.")
+                    else:
+                        create_order(order_data, user_id)
+                        st.session_state["order_created"] = True
+                        st.success("Order created successfully!")
                             with st.spinner('🔄 Creating your account...'):
                                 # Debug: Show what data we're trying to create
                                 st.info(f"🔄 Creating account for User ID: {signup_user_id}")
