@@ -804,17 +804,12 @@ def render_orders_page(services, user):
                     st.error(f"Debug error: {e}")
         else:
             st.markdown("### My Orders")
-            # For regular users, filter by their name or email
+            # For regular users, filter strictly by user_id
             all_orders = services['orders'].get_all_orders()
             if not all_orders.empty and 'created_by' in all_orders.columns:
-                # Filter by user's name first, then fallback to email
-                user_name = user.get('name', user.get('email', '').split('@')[0])
-                user_email = user.get('email', user.get('user_id', ''))
-                orders = all_orders[
-                    (all_orders['created_by'].astype(str) == str(user_name)) |
-                    (all_orders['created_by'].astype(str) == str(user_email))
-                ]
-                st.info(f"📊 Showing {len(orders)} orders for user: {user_name}")
+                user_id = user.get('user_id')
+                orders = all_orders[all_orders['created_by'].astype(str) == str(user_id)]
+                st.info(f"📊 Showing {len(orders)} orders for your account.")
             else:
                 orders = pd.DataFrame()  # Empty dataframe if no orders or column missing
         
