@@ -349,35 +349,6 @@ def main():
                         create_order(order_data, user_id)
                         st.session_state["order_created"] = True
                         st.success("Order created successfully!")
-                            with st.spinner('🔄 Creating your account...'):
-                                # Debug: Show what data we're trying to create
-                                st.info(f"🔄 Creating account for User ID: {signup_user_id}")
-                                
-                                success = services['auth'].create_account(
-                                    user_id=signup_user_id,
-                                    password=signup_password,
-                                    role="user",  # Always set to user role
-                                    name=signup_name
-                                )
-                            
-                            if success:
-                                st.success("✅ Account created successfully! You can now login.")
-                                st.balloons()  # Add celebration effect
-                                success_animation()
-                                
-                                # Show helpful login info
-                                st.info("📝 **Your Login Credentials:**")
-                                st.code(f"User ID: {signup_user_id}")
-                                st.write("💡 Switch to the **Login tab** and use these credentials to access your account.")
-                                
-                                # Debug: Verify user was actually created
-                                users_df = services['auth'].storage.read_sheet("Users")
-                                if not users_df.empty and signup_user_id in users_df['user_id'].values:
-                                    st.success(f"✅ Verified: User {signup_user_id} successfully saved to database.")
-                                else:
-                                    st.warning("⚠️ Account created but verification failed. Please try logging in.")
-                            else:
-                                st.error("❌ Failed to create account. Please try again.")
                     
                     except ValueError as e:
                         st.error(f"❌ {str(e)}")
