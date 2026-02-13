@@ -469,8 +469,36 @@ class GoogleSheetsStorage(StorageBase):
 
 def get_storage_instance(settings_service=None) -> StorageBase:
     """Factory function to get storage instance based on settings"""
+    import streamlit as st
+    import json
+    # Prefer Google Sheets if running on Streamlit Cloud (GOOGLE_SERVICE_ACCOUNT in secrets)
+    if "GOOGLE_SERVICE_ACCOUNT" in st.secrets:
+        # Patch gspread/credentials to use st.secrets
+        try:
+            info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT"])
+            import gspread
+            from google.oauth2.service_account import Credentials
+            creds = Credentials.from_service_account_info(info, scopes=[
+                'https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive',
+                'https://www.googleapis.com/auth/spreadsheets',
+            ])
+            gspread_client = gspread.authorize(creds)
+            # You may want to get the sheet_id from st.secrets or settings_service
+            sheet_id = None
+            if settings_service is not None:
+                sheet_id = settings_service.get_setting('google_sheet_id', '')
+            if not sheet_id:
+                sheet_id = st.secrets.get('GOOGLE_SHEET_ID', '')
+            if not sheet_id:
+                raise ValueError("Google Sheets enabled but no Sheet ID provided.")
+            logger.info(f"Initializing Google Sheets storage with Sheet ID: {sheet_id}")
+            return GoogleSheetsStorage(sheet_id, gspread_client=gspread_client)
+        except Exception as e:
+            logger.error(f"Error initializing Google Sheets storage: {e}. Falling back to Excel.")
+            return ExcelStorage()
+    # Fallback to Excel for local/dev
     if settings_service is None:
-        # Default to Excel when no settings provided
         return ExcelStorage()
     
     try:
