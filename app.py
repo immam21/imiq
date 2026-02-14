@@ -1027,8 +1027,9 @@ def render_orders_page(services, user):
                                     st.session_state.total_amount = 0.0
                                     st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
                                     success_animation()
-                                    # Auto refresh to clear form
-                                    st.rerun()
+                                    # Manual refresh button
+                                    if st.button("🔄 Refresh Form", key="refresh_order_form_btn"):
+                                        st.rerun()
                                 else:
                                     st.error("❌ Failed to create order. Please try again.")
                             except Exception as e:
