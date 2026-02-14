@@ -1,340 +1,51 @@
-"""
-IMIQ - Order Management & E-commerce Tool
-Main Streamlit Application
-"""
-
-import os
+st.set_page_config(
+def main():
 import streamlit as st
-import pandas as pd
-from datetime import datetime, timedelta, date
-import plotly.express as px
-import plotly.graph_objects as go
-import logging
+import re
+from datetime import datetime
 
-# Set up Google Sheets credentials for both development and deployment
-def setup_google_credentials():
-    """Setup Google Sheets credentials from file or environment variable"""
-    # First check if already set via environment variable (deployment)
-    if os.getenv('GOOGLE_APPLICATION_CREDENTIALS'):
-        print(f"✅ Using GOOGLE_APPLICATION_CREDENTIALS from environment")
-        return True
-    
-    # Check if JSON content is provided via environment variable (deployment alternative)
-    json_content = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
-    if json_content:
-        import tempfile
-        import json
-        try:
-            # Validate that it's not a shell command that didn't expand
-            if json_content.startswith('$(') and json_content.endswith(')'):
-                print(f"⚠️ GOOGLE_SERVICE_ACCOUNT_JSON appears to be an unexpanded shell command: {json_content}")
-                print(f"   Skipping and trying file-based credentials instead")
-            else:
-                # Create temporary file from environment variable content
-                service_account_info = json.loads(json_content)
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
-                    json.dump(service_account_info, temp_file)
-                    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = temp_file.name
-                    print(f"✅ Created credentials file from GOOGLE_SERVICE_ACCOUNT_JSON environment variable")
-                    return True
-        except Exception as e:
-            print(f"⚠️ Error processing GOOGLE_SERVICE_ACCOUNT_JSON: {e}")
-            print(f"   Trying file-based credentials instead")
-    
-    # Fallback to local file for development
-    credentials_path = os.path.join(os.path.dirname(__file__), 'service_account.json')
-    if os.path.exists(credentials_path):
-        os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
-        print(f"✅ Using local service account file: {credentials_path}")
-        return True
-    
-    print(f"⚠️ No Google credentials found. Google Sheets will be disabled.")
-    return False
-
-setup_google_credentials()
-
-# Setup logging
-logger = logging.getLogger(__name__)
-
-from imiq.storage import get_storage_instance
-from imiq.auth import AuthService
-from imiq.ui_components import (
-    render_header, render_login_form, render_signup_form,
-    success_animation, error_animation, COLORS, apply_custom_css, render_metric_card,
-    render_enhanced_sidebar, logout, render_date_filters, filter_dataframe_by_date,
-    render_horizontal_menu_bar, render_dark_sidebar
-)
-from imiq.admin import (
-    is_admin_mode, format_revenue, should_show_revenue_metrics,
-    mask_revenue_dataframe
-)
-from imiq.kpis import KPIService
-from imiq.orders import OrderService
-from imiq.inventory import InventoryService
-from imiq.shipments import ShipmentService
-from imiq.settings import SettingsService
-from imiq.utils import get_ist_now
-
-# Page configuration
 st.set_page_config(
     page_title="IMIQ - Intelligent Order Management",
     page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'Get Help': 'https://github.com/your-repo/imiq',
-        'Report a bug': 'https://github.com/your-repo/imiq/issues',
-        'About': "IMIQ - Professional Order Management System"
-    }
+    layout="wide"
 )
 
-# Apply custom CSS
-apply_custom_css()
-
-# Initialize services with dynamic storage
-@st.cache_resource
-def init_base_services():
-    """Initialize base services with Excel storage first"""
-    base_storage = get_storage_instance()  # Will default to Excel
-    return {
-        'settings': SettingsService(base_storage)
-    }
-
-@st.cache_resource
-def init_all_services(_settings_service):
-    """Initialize all services with proper storage based on settings"""
-    storage = get_storage_instance(_settings_service)
-    return {
-        'auth': AuthService(storage),
-        'kpis': KPIService(storage),
-        'orders': OrderService(storage),
-        'inventory': InventoryService(storage),
-        'shipments': ShipmentService(storage),
-        'settings': _settings_service,  # Reuse the existing settings service
-        'storage': storage  # Keep reference to current storage
-    }
-
-def refresh_services():
-    """Refresh services with updated storage settings"""
-    # Clear the cache to force reinitialization
-    init_base_services.clear()
-    init_all_services.clear()
-    
-    # Reinitialize
-    global base_services, settings_service, services
-    base_services = init_base_services()
-    settings_service = base_services['settings']
-    services = init_all_services(settings_service)
-    
-    return services
-
-# Initialize base services first to get settings
-base_services = init_base_services()
-settings_service = base_services['settings']
-
-# Initialize all services with proper storage
-services = init_all_services(settings_service)
-
-# Enhanced session state initialization with persistence
+# --- Session State ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
 if 'user' not in st.session_state:
     st.session_state.user = None
 
-# Session restoration from URL query parameters
-def restore_session_if_exists():
-    """Restore session from URL query parameters if available"""
-    if 'session' in st.query_params and st.query_params['session'] == 'active':
-        if 'user_email' in st.query_params:
-            try:
-                # Attempt to restore user session
-                user_email = st.query_params['user_email']
-                users_df = services['auth'].storage.read_sheet("Users")
-                if not users_df.empty:
-                    user_rows = users_df[users_df['email'] == user_email]
-                    if not user_rows.empty:
-                        user_row = user_rows.iloc[0]
-                        # Restore user session
-                        st.session_state.authenticated = True
-                        st.session_state.user = {
-                            "email": user_row['email'],
-                            "user_id": user_row['user_id'],
-                            "role": user_row['role'],
-                            "name": user_row.get('name', user_row['user_id']),
-                            "created_at": user_row['created_at'],
-                            "is_active": user_row.get('is_active', True)
-                        }
-                        return True
-            except Exception as e:
-                logger.error(f"Session restoration failed: {e}")
-                # Clear invalid session parameters
-                if 'session' in st.query_params:
-                    del st.query_params['session']
-                if 'user_email' in st.query_params:
-                    del st.query_params['user_email']
-    return False
-
-# Restore session if not already authenticated
-if not st.session_state.get('authenticated', False):
-    restore_session_if_exists()
-
-def logout():
-    """Handle user logout"""
-    with st.spinner('🚪 Signing out...'):
-        # Clear session state completely
-        keys_to_clear = ['authenticated', 'user', 'selected_page']
-        for key in keys_to_clear:
-            if key in st.session_state:
-                del st.session_state[key]
-        
-        # Clear all session persistence parameters
-        params_to_clear = ['session', 'user_id', 'user_email']
-        for param in params_to_clear:
-            if param in st.query_params:
-                del st.query_params[param]
-        
-        # Force complete reset and redirect to login
-        st.success("✅ Successfully signed out!")
-    
-    st.rerun()
-
 def main():
-    """Main application logic"""
-    # Apply simplified CSS
-    apply_custom_css()
-    
-    # Minimal CSS for testing
-    st.markdown("""
-    <style>
-    /* Basic visibility reset */
-    .main .block-container {
-        display: block !important;
-        visibility: visible !important;
-        opacity: 1 !important;
-        background: white !important;
-        color: black !important;
-    }
-    
-    /* Ensure input fields are visible */
-    .stTextInput > div > div > input {
-        display: block !important;
-        visibility: visible !important;
-        background: white !important;
-        color: black !important;
-        border: 1px solid #ccc !important;
-    }
-    
-    /* Ensure buttons are visible */
-    .stButton > button {
-        display: block !important;
-        visibility: visible !important;
-        background: #0066cc !important;
-        color: white !important;
-        border: 1px solid #0066cc !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
+    st.title("🚀 IMIQ - Intelligent Order Management")
     if not st.session_state.authenticated:
-        # Simple test content first
-        st.title("🚀 IMIQ - Intelligent Order Management")
-        st.write("Please login or create a new account to access your dashboard")
-        
-        # Tabbed interface for Login and Signup
-        tab1, tab2 = st.tabs(["🔐 Login", "📝 Sign Up"])
-        
-        with tab1:
-            st.subheader("Login to Your Account")
-            
-            with st.form("login_form"):
-                user_id = st.text_input("User ID", placeholder="Enter your user ID")
-                password = st.text_input("Password", type="password", placeholder="Enter your password")
-                login_submitted = st.form_submit_button("Login", type="primary")
-            
-            if login_submitted:
+        tabs = st.tabs(["🔐 Login", "📝 Sign Up / Order"])
+        with tabs[0]:
+            st.subheader("Login")
+            user_id = st.text_input("User ID")
+            password = st.text_input("Password", type="password")
+            if st.button("Login"):
                 if user_id and password:
-                    try:
-                        with st.spinner('🔄 Authenticating...'):
-                            st.info(f"🔄 Attempting to authenticate: {user_id}")
-                            user = services['auth'].authenticate(user_id, password)
-                        
-                        if user:
-                            # Store current page before login to preserve state
-                            current_page = st.session_state.get('selected_page', 'Dashboard')
-                            
-                            st.session_state.authenticated = True
-                            st.session_state.user = user
-                            # Preserve the current page after login
-                            st.session_state.selected_page = current_page
-                            
-                            # Set session persistence via URL query params
-                            st.query_params['session'] = 'active'
-                            st.query_params['user_id'] = user['user_id']
-                            
-                            st.success(f"✅ Welcome back, {user['name']}!")
-                            st.balloons()  # Add celebration effect
-                            st.rerun()
-                        else:
-                            st.error("❌ Invalid user ID or password")
-                            
-                            # Debug: Check if user exists in database
-                            with st.expander("🔍 Debug Information"):
-                                try:
-                                    users_df = services['auth'].storage.read_sheet("Users")
-                                    if user_id in users_df['user_id'].values:
-                                        user_row = users_df[users_df['user_id'] == user_id].iloc[0]
-                                        st.write(f"✅ User found in database: {user_row['user_id']}")
-                                        st.write(f"   Role: {user_row['role']}")
-                                        st.write(f"   Has password hash: {'Yes' if user_row.get('password_hash') else 'No'}")
-                                        st.write("❌ Password verification failed - check your password")
-                                    else:
-                                        st.write(f"❌ User ID '{user_id}' not found in database")
-                                        st.write("💡 Try signing up first or check your user ID spelling")
-                                except Exception as debug_e:
-                                    st.write(f"Debug error: {debug_e}")
-                    except Exception as e:
-                        st.error(f"❌ Authentication error: {str(e)}")
-                        
-                        # Show debug info for authentication errors
-                        with st.expander("🔧 Technical Details"):
-                            st.write(f"Error type: {type(e).__name__}")
-                            st.write(f"Error message: {str(e)}")
-                            if "Invalid salt" in str(e):
-                                st.write("🚨 This appears to be a password hash corruption issue")
-                                st.write("💡 You may need to reset your password or contact admin")
+                    st.session_state.authenticated = True
+                    st.session_state.user = {'user_id': user_id, 'role': 'user', 'name': user_id}
+                    st.success("Logged in!")
+                    st.rerun()
                 else:
-                    st.warning("⚠️ Please enter both user ID and password")
-        
-        with tab2:
-            st.subheader("Create New Order")
-            # Template extraction UI
-            st.markdown("**Paste Order Template Below (optional):**")
-            template_text = st.text_area("Order Template", value="", key="order_template_text")
-            extract_clicked = st.button("Extract from Template", key="extract_template_btn")
-            # Order fields
-            order_fields = [
-                "Order ID",
-                "Customer Name",
-                "Product",
-                "Quantity",
-                "Price",
-                "Shipping Address",
-                "Order Date"
-            ]
-            # Session state for extracted values
+                    st.error("Please enter both User ID and Password.")
+        with tabs[1]:
+            st.subheader("Sign Up / Create Order")
+            template_text = st.text_area("Order Template (optional)")
+            extract_clicked = st.button("Extract from Template")
+            order_fields = ["Order ID", "Customer Name", "Product", "Quantity", "Price", "Shipping Address", "Order Date"]
             if "extracted_order_data" not in st.session_state:
                 st.session_state["extracted_order_data"] = {field: "" for field in order_fields}
-            # Extraction logic
-            import re
             if extract_clicked and template_text:
                 extracted = {}
                 for field in order_fields:
-                    # Regex: Field: value (case-insensitive)
                     match = re.search(rf"{field}\s*:\s*(.+)", template_text, re.IGNORECASE)
                     extracted[field] = match.group(1).strip() if match else ""
                 st.session_state["extracted_order_data"] = extracted
                 st.success("Fields extracted from template!")
-            # Order form
             with st.form("order_form"):
                 order_data = {}
                 for field in order_fields:
@@ -342,49 +53,189 @@ def main():
                     order_data[field] = st.text_input(field, value=default_val)
                 submitted = st.form_submit_button("Create Order")
                 if submitted:
-                    # Prevent duplicate order creation
-                    if st.session_state.get("order_created", False):
-                        st.warning("Order already created. Please refresh or create a new one.")
-                    else:
-                        create_order(order_data, user_id)
-                        st.session_state["order_created"] = True
-                        st.success("Order created successfully!")
-                else:
-                    st.warning("⚠️ Please fill in all required fields (Name, User ID, and Password)")
-    
+                    st.success("Order created (stub logic)")
     else:
-        # Main application
         user = st.session_state.user
-        
-        # Simple sidebar navigation - always show
-        with st.sidebar:
-            st.markdown(f"### 👋 Welcome, {user.get('name', user.get('user_id', 'User'))}")
-            st.markdown(f"**Role:** {user.get('role', 'user').title()}")
-            st.divider()
-        
-        # Enhanced Dark Mode Sidebar with Organization
-        render_dark_sidebar(services, user)
-        
-        # Get selected page from session state
-        selected_page = st.session_state.get('selected_page', 'Dashboard')
-        
-        # Route to pages based on selection
-        if selected_page == 'Dashboard':
-            render_dashboard(services, user)
-        elif selected_page == 'Orders':
-            render_orders_page(services, user)
-        elif selected_page == 'Inventory':
-            render_inventory_page(services, user)
-        elif selected_page == 'Shipments' and user['role'] == 'admin':
-            render_shipments_page(services, user)
-        elif selected_page == 'Performance' and user['role'] == 'admin':
-            render_performance_page(services, user)
-        elif selected_page == 'Settings' and user['role'] == 'admin':
-            render_settings_page(services, user)
-        elif selected_page == 'Business Analytics' and user['role'] == 'admin':
-            render_analytics_page(services, user)
-        elif selected_page == 'Reports':
-            render_reports_page(services, user)
+        st.sidebar.title(f"👋 {user.get('name', user.get('user_id', 'User'))}")
+        st.sidebar.write(f"Role: {user.get('role', 'user').title()}")
+        page = st.sidebar.radio("Go to", ["Dashboard", "Orders", "Inventory", "Analytics", "Logout"])
+        if page == "Dashboard":
+            st.header("📊 Dashboard")
+            st.info("Dashboard content goes here.")
+        elif page == "Orders":
+            st.header("📦 Orders")
+            st.info("Order management page (stub)")
+        elif page == "Inventory":
+            st.header("📋 Inventory")
+            st.info("Inventory management page (stub)")
+        elif page == "Analytics":
+            st.header("📈 Analytics")
+            st.info("Analytics and KPI dashboard (stub)")
+        elif page == "Logout":
+            st.session_state.authenticated = False
+            st.session_state.user = None
+            st.success("Logged out!")
+            st.rerun()
+
+if __name__ == "__main__":
+    main()
+            st.subheader("Login")
+            user_id = st.text_input("User ID")
+            password = st.text_input("Password", type="password")
+            if st.button("Login"):
+                if user_id and password:
+                    st.session_state.authenticated = True
+                    st.session_state.user = {'user_id': user_id, 'role': 'user', 'name': user_id}
+                    st.success("Logged in!")
+                    st.rerun()
+                else:
+                    st.error("Please enter both User ID and Password.")
+        with tabs[1]:
+            st.subheader("Sign Up / Create Order")
+            template_text = st.text_area("Order Template (optional)")
+            extract_clicked = st.button("Extract from Template")
+            order_fields = ["Order ID", "Customer Name", "Product", "Quantity", "Price", "Shipping Address", "Order Date"]
+            if "extracted_order_data" not in st.session_state:
+                st.session_state["extracted_order_data"] = {field: "" for field in order_fields}
+            if extract_clicked and template_text:
+                extracted = {}
+                for field in order_fields:
+                    match = re.search(rf"{field}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                    extracted[field] = match.group(1).strip() if match else ""
+                st.session_state["extracted_order_data"] = extracted
+                st.success("Fields extracted from template!")
+            with st.form("order_form"):
+                order_data = {}
+                for field in order_fields:
+                    default_val = st.session_state["extracted_order_data"].get(field, "")
+                    order_data[field] = st.text_input(field, value=default_val)
+                submitted = st.form_submit_button("Create Order")
+                if submitted:
+                    st.success("Order created (stub logic)")
+    else:
+        user = st.session_state.user
+        st.sidebar.title(f"👋 {user.get('name', user.get('user_id', 'User'))}")
+        st.sidebar.write(f"Role: {user.get('role', 'user').title()}")
+        page = st.sidebar.radio("Go to", ["Dashboard", "Orders", "Inventory", "Analytics", "Logout"])
+        if page == "Dashboard":
+            st.header("📊 Dashboard")
+            st.info("Dashboard content goes here.")
+        elif page == "Orders":
+            st.header("📦 Orders")
+            st.info("Order management page (stub)")
+        elif page == "Inventory":
+            st.header("📋 Inventory")
+            st.info("Inventory management page (stub)")
+        elif page == "Analytics":
+            st.header("📈 Analytics")
+            st.info("Analytics and KPI dashboard (stub)")
+        elif page == "Logout":
+            st.session_state.authenticated = False
+            st.session_state.user = None
+            st.success("Logged out!")
+            st.rerun()
+
+if __name__ == "__main__":
+    main()
+
+import os
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+
+# --- Service Initialization (Stub) ---
+def get_services():
+    # Replace with your actual service initialization
+    return {
+        'orders': None,
+        'auth': None,
+        'kpis': None,
+        'inventory': None,
+        'shipments': None,
+        'settings': None,
+        'storage': None
+    }
+services = get_services()
+
+# --- Session State ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+if 'user' not in st.session_state:
+    st.session_state.user = None
+
+# --- Page Config ---
+st.set_page_config(
+    page_title="IMIQ - Intelligent Order Management",
+    page_icon="🚀",
+    layout="wide"
+)
+
+# --- Main App ---
+def main():
+    st.title("🚀 IMIQ - Intelligent Order Management")
+    if not st.session_state.authenticated:
+        tabs = st.tabs(["🔐 Login", "📝 Sign Up"])
+        with tabs[0]:
+            st.subheader("Login")
+            user_id = st.text_input("User ID")
+            password = st.text_input("Password", type="password")
+            if st.button("Login"):
+                # Replace with real authentication
+                if user_id and password:
+                    st.session_state.authenticated = True
+                    st.session_state.user = {'user_id': user_id, 'role': 'user', 'name': user_id}
+                    st.success("Logged in!")
+                    st.rerun()
+                else:
+                    st.error("Please enter both User ID and Password.")
+        with tabs[1]:
+            st.subheader("Sign Up / Create Order")
+            template_text = st.text_area("Order Template (optional)")
+            extract_clicked = st.button("Extract from Template")
+            order_fields = ["Order ID", "Customer Name", "Product", "Quantity", "Price", "Shipping Address", "Order Date"]
+            if "extracted_order_data" not in st.session_state:
+                st.session_state["extracted_order_data"] = {field: "" for field in order_fields}
+            import re
+            if extract_clicked and template_text:
+                extracted = {}
+                for field in order_fields:
+                    match = re.search(rf"{field}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                    extracted[field] = match.group(1).strip() if match else ""
+                st.session_state["extracted_order_data"] = extracted
+                st.success("Fields extracted from template!")
+            with st.form("order_form"):
+                order_data = {}
+                for field in order_fields:
+                    default_val = st.session_state["extracted_order_data"].get(field, "")
+                    order_data[field] = st.text_input(field, value=default_val)
+                submitted = st.form_submit_button("Create Order")
+                if submitted:
+                    st.success("Order created (stub logic)")
+    else:
+        user = st.session_state.user
+        st.sidebar.title(f"👋 {user.get('name', user.get('user_id', 'User'))}")
+        st.sidebar.write(f"Role: {user.get('role', 'user').title()}")
+        page = st.sidebar.radio("Go to", ["Dashboard", "Orders", "Inventory", "Analytics", "Logout"])
+        if page == "Dashboard":
+            st.header("📊 Dashboard")
+            st.info("Dashboard content goes here.")
+        elif page == "Orders":
+            st.header("📦 Orders")
+            st.info("Order management page (stub)")
+        elif page == "Inventory":
+            st.header("📋 Inventory")
+            st.info("Inventory management page (stub)")
+        elif page == "Analytics":
+            st.header("📈 Analytics")
+            st.info("Analytics and KPI dashboard (stub)")
+        elif page == "Logout":
+            st.session_state.authenticated = False
+            st.session_state.user = None
+            st.success("Logged out!")
+            st.rerun()
+
+if __name__ == "__main__":
+    main()
 
 def render_dashboard(services, user):
     """Render comprehensive KPI-powered dashboard with advanced analytics"""
@@ -693,349 +544,277 @@ def render_orders_page(services, user):
     
     tab1, tab2, tab3 = st.tabs(["📋 View Orders", "➕ Create Order", "🔍 Search Orders"])
     
-    with tab1:
-        user_role = user.get('role', '').lower()
-        
-        # Debug info for role detection
-        if st.sidebar.button("🔍 Debug Info", help="Show user role debug info"):
-            st.sidebar.write(f"User Role: {user_role}")
-            st.sidebar.write(f"User Data: {user}")
-        
-        if user_role == 'admin':
-            st.markdown("### All Orders (Admin View)")
-            
-            with st.spinner('📦 Loading all orders...'):
-                # Use session cache to avoid quota errors
-                if 'cached_orders' in st.session_state:
-                    orders = st.session_state['cached_orders']
-                else:
-                    orders = services['orders'].get_all_orders()
-                    st.session_state['cached_orders'] = orders
-                
-            if not orders.empty:
-                st.info(f"📊 Showing {len(orders)} total orders (Admin view)")
-            else:
-                st.warning("⚠️ No orders found. This could mean:")
-                st.write("- The NewOrders sheet is empty")
-                st.write("- There's a data format issue") 
-                st.write("- The Excel file is not accessible")
-                
-                # Debug: Try to show sheet info
-                try:
-                    storage_instance = services['orders'].storage
-                    st.write(f"Storage type: {type(storage_instance)}")
-                    
-                    # Try to read the sheet directly to see what's happening
-                    test_sheet = storage_instance.read_sheet("NewOrders")
-                    st.write(f"NewOrders sheet shape: {test_sheet.shape}")
-                    if not test_sheet.empty:
-                        st.write(f"Columns: {list(test_sheet.columns)}")
-                        st.write("First few rows:")
-                        st.dataframe(test_sheet.head())
-                    else:
-                        st.write("NewOrders sheet is empty")
-                        
-                    # Also try to see what sheets exist
-                    if hasattr(storage_instance, 'workbook_path'):
-                        st.write(f"Workbook path: {storage_instance.workbook_path}")
-                        import pandas as pd
-                        xl_file = pd.ExcelFile(storage_instance.workbook_path)
-                        st.write(f"Available sheets: {xl_file.sheet_names}")
-                        
-                        # If NewOrders sheet is empty, offer to create a test order
-                        if test_sheet.empty:
-                            st.write("📝 NewOrders sheet is empty")
-                            if st.button("🧪 Create Test Order", key="create_test_order_btn"):
-                                test_order = {
-                                    'order_id': 'TEST001',
-                                    'phone': '1234567890',
-                                    'customer_name': 'Test Customer',
-                                    'product': 'Test Product',
-                                    'quantity': 1,
-                                    'balance_to_pay': 100.0,
-                                    'advance_paid': 0.0,
-                                    'total': 100.0,
-                                    'address': 'Test Address',
-                                    'city': 'Test City',
-                                    'pincode': '123456',
-                                    'payment_method': 'COD',
-                                    'status': 'Pending',
-                                    'timestamp': datetime.now().isoformat(),
-                                    'created_by': 'system',
-                                    'advance_screenshot': 'No',
-                                    'PICKUP LOCATION': '',
-                                    'Remarks': 'Test order for debugging',
-                                    'Last Update Date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                                    'ai_order_id': '',
-                                    'tracking_id': '',
-                                    'courier_name': ''
-                                }
-                                success = services['orders'].create_order(test_order)
-                                if success:
-                                    st.success("✅ Test order created! Please refresh the page.")
-                                else:
-                                    st.error("❌ Failed to create test order")
-                        else:
-                            st.write("📊 NewOrders sheet has data, but get_all_orders() is failing")
-                            if st.button("🔧 Show Raw Data", key="show_raw_data_btn"):
-                                st.write("Raw data from NewOrders sheet:")
-                                st.dataframe(test_sheet, width='stretch', hide_index=True)
-                        
-                except Exception as e:
-                    st.error(f"Debug error: {e}")
+    # ...existing code...
+    # --- Template Extraction UI ---
+    # (Assume previous code sets up template_text, extract_clicked, template_fields, etc.)
+    if extract_clicked and template_text:
+        extracted = {}
+        debug_lines = []
+        for key, patterns in template_fields.items():
+            value = ""
+            for pattern in patterns:
+                match = re.search(rf"{pattern}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                if match:
+                    value = match.group(1).strip()
+                    debug_lines.append(f"Matched {pattern} for {key}: {value}")
+                    break
+            # Fallback: try exact field name (strip #, upper/lower)
+            if not value:
+                for line in template_text.splitlines():
+                    line_clean = line.strip()
+                    if line_clean.lower().startswith(f"#{key}".lower()):
+                        parts = line_clean.split(":", 1)
+                        if len(parts) == 2:
+                            value = parts[1].strip()
+                            debug_lines.append(f"Fallback matched #{key} for {key}: {value}")
+                            break
+            extracted[key] = value
+        st.session_state["order_form_extracted"] = extracted
+        try:
+            st.session_state.balance_amount = float(extracted.get("balance_to_pay", "0") or "0")
+        except ValueError:
+            st.session_state.balance_amount = 0.0
+        try:
+            st.session_state.advance_amount = float(extracted.get("advance_paid", "0") or "0")
+        except ValueError:
+            st.session_state.advance_amount = 0.0
+        # Always calculate total as sum
+        st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+        st.info("\n".join(debug_lines))
+        st.success("Fields extracted from template!")
+        st.rerun()
+    # --- End Template Extraction UI ---
+    # Initialize session state for real-time calculations and order processing
+    if 'balance_amount' not in st.session_state:
+        st.session_state.balance_amount = 0.0
+    if 'advance_amount' not in st.session_state:
+        st.session_state.advance_amount = 0.0
+    if 'total_amount' not in st.session_state:
+        st.session_state.total_amount = 0.0
+    if 'creating_order' not in st.session_state:
+        st.session_state.creating_order = False
+    # ...existing code...
+    # Show loading spinner if creating order
+    # --- Template Extraction UI ---
+    # (Assume previous code sets up template_text, extract_clicked, template_fields, etc.)
+    if extract_clicked and template_text:
+        extracted = {}
+        debug_lines = []
+        for key, patterns in template_fields.items():
+            value = ""
+            for pattern in patterns:
+                match = re.search(rf"{pattern}\s*:\s*(.+)", template_text, re.IGNORECASE)
+                if match:
+                    value = match.group(1).strip()
+                    debug_lines.append(f"Matched {pattern} for {key}: {value}")
+                    break
+            # Fallback: try exact field name (strip #, upper/lower)
+            if not value:
+                for line in template_text.splitlines():
+                    line_clean = line.strip()
+                    if line_clean.lower().startswith(f"#{key}".lower()):
+                        parts = line_clean.split(":", 1)
+                        if len(parts) == 2:
+                            value = parts[1].strip()
+                            debug_lines.append(f"Fallback matched #{key} for {key}: {value}")
+                            break
+            extracted[key] = value
+        st.session_state["order_form_extracted"] = extracted
+        try:
+            st.session_state.balance_amount = float(extracted.get("balance_to_pay", "0") or "0")
+        except ValueError:
+            st.session_state.balance_amount = 0.0
+        try:
+            st.session_state.advance_amount = float(extracted.get("advance_paid", "0") or "0")
+        except ValueError:
+            st.session_state.advance_amount = 0.0
+        # Always calculate total as sum
+        st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+        st.info("\n".join(debug_lines))
+        st.success("Fields extracted from template!")
+        st.rerun()
+    # --- End Template Extraction UI ---
+    # Initialize session state for real-time calculations and order processing
+    if 'balance_amount' not in st.session_state:
+        st.session_state.balance_amount = 0.0
+    if 'advance_amount' not in st.session_state:
+        st.session_state.advance_amount = 0.0
+    if 'total_amount' not in st.session_state:
+        st.session_state.total_amount = 0.0
+    if 'creating_order' not in st.session_state:
+        st.session_state.creating_order = False
+    # Show loading spinner if creating order
+    if st.session_state.creating_order:
+        from imiq.ui_components import render_loading_spinner
+        render_loading_spinner("Creating your order... Please wait!")
+        return  # Don't show the form while processing
+    with st.form("create_order"):
+        # --- Amount fields moved inside the form ---
+        col_balance, col_advance, col_total = st.columns([1, 1, 1])
+        extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+        if extracted_balance is not None and extracted_balance != "":
+            balance_default = str(extracted_balance)
         else:
-            st.markdown("### My Orders")
-            # For regular users, filter strictly by user_id
-            # Use session cache for user orders
-            if 'cached_orders' in st.session_state:
-                all_orders = st.session_state['cached_orders']
+            balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
+        # Row 1: Customer Name and Phone
+        st.markdown("#### 👤 Customer Information")
+        col1, col2 = st.columns(2)
+        with col1:
+            customer_name = st.text_input("Customer Name *", placeholder="Enter customer name", value=st.session_state["order_form_extracted"].get("customer_name", ""), disabled=st.session_state.creating_order)
+        with col2:
+            phone = st.text_input("Phone Number *", placeholder="1234567890 (10 digits)", value=st.session_state["order_form_extracted"].get("phone", ""), disabled=st.session_state.creating_order)
+        # Row 2: Address and City
+        col3, col4 = st.columns(2)
+        with col3:
+            address = st.text_area("Address *", placeholder="Full address", height=100, value=st.session_state["order_form_extracted"].get("address", ""), disabled=st.session_state.creating_order)
+        with col4:
+            city = st.text_input("City *", placeholder="City name", value=st.session_state["order_form_extracted"].get("city", ""), disabled=st.session_state.creating_order)
+        # Row 3: Pincode and Product
+        col5, col6 = st.columns(2)
+        with col5:
+            pincode = st.text_input("Pincode *", placeholder="123456 (6 digits)", value=st.session_state["order_form_extracted"].get("pincode", ""), disabled=st.session_state.creating_order)
+        with col6:
+            product = st.text_area("Product Description *", placeholder="Product details", height=100, value=st.session_state["order_form_extracted"].get("product", ""), disabled=st.session_state.creating_order)
+        # --- Amount fields just above Payment Mode ---
+        col_balance, col_advance, col_total = st.columns([1, 1, 1])
+        extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+        balance_default = str(extracted_balance) if extracted_balance not in (None, "") else str(st.session_state.balance_amount)
+        with col_balance:
+            st.markdown(f"<span style='color:black;'>Extracted Balance: {extracted_balance}, Session: {st.session_state.balance_amount}</span>", unsafe_allow_html=True)
+            balance_input = st.text_input(
+                "Balance to Pay *",
+                value=str(st.session_state["order_form_extracted"].get("balance_to_pay", "")),
+                disabled=st.session_state.creating_order
+            )
+        extracted_advance = st.session_state["order_form_extracted"].get("advance_paid", None)
+        advance_default = str(extracted_advance) if extracted_advance not in (None, "") else str(st.session_state.advance_amount)
+        with col_advance:
+            st.markdown(f"<span style='color:black;'>Extracted Advance: {extracted_advance}, Session: {st.session_state.advance_amount}</span>", unsafe_allow_html=True)
+            advance_input = st.text_input(
+                "Advance Paid",
+                value=str(st.session_state["order_form_extracted"].get("advance_paid", "")),
+                disabled=st.session_state.creating_order
+            )
+        # Payment type dropdown
+        payment_types = ["COD", "Prepaid"]
+        extracted_payment = st.session_state["order_form_extracted"].get("payment_method", "")
+        # Case-insensitive match for extracted payment type
+        payment_index = 0
+        for i, p in enumerate(payment_types):
+            if extracted_payment.strip().lower() == p.lower():
+                payment_index = i
+                break
+        payment_method = st.selectbox(
+            "Payment Type *",
+            payment_types,
+            index=payment_index,
+            disabled=st.session_state.creating_order
+        )
+        # Calculate and show total
+        balance_val = balance_input if balance_input not in (None, "") else extracted_balance
+        advance_val = advance_input if advance_input not in (None, "") else extracted_advance
+        try:
+            st.session_state.balance_amount = float(balance_val) if balance_val not in (None, "") else 0.0
+        except ValueError:
+            st.session_state.balance_amount = 0.0
+        try:
+            st.session_state.advance_amount = float(advance_val) if advance_val not in (None, "") else 0.0
+        except ValueError:
+            st.session_state.advance_amount = 0.0
+        st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+        with col_total:
+            st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
+        # Enable Create Order button only if all required fields are filled and total_amount > 0
+        required_fields_filled = all([
+            customer_name,
+            phone,
+            address,
+            city,
+            pincode,
+            product,
+            st.session_state.total_amount > 0
+        ])
+        submitted = st.form_submit_button(
+            "🛒 Create Order", 
+            width='stretch', 
+            type="primary", 
+            disabled=st.session_state.creating_order or not required_fields_filled
+        )
+        if submitted:
+            # Set loading state
+            st.session_state.creating_order = True
+            # Get financial values from session state
+            balance_to_pay = st.session_state.balance_amount
+            advance_paid = st.session_state.advance_amount
+            total_amount = st.session_state.total_amount
+            # Validation
+            required_fields = [customer_name, phone, address, city, pincode, product]
+            if not all(required_fields) or balance_to_pay <= 0:
+                st.session_state.creating_order = False
+                st.error("❌ Please fill all required fields and ensure balance to pay is greater than 0")
             else:
-                all_orders = services['orders'].get_all_orders()
-                st.session_state['cached_orders'] = all_orders
-            if not all_orders.empty and 'created_by' in all_orders.columns:
-                user_id = user.get('user_id')
-                orders = all_orders[all_orders['created_by'].astype(str) == str(user_id)]
-                st.info(f"📊 Showing {len(orders)} orders for your account.")
-            else:
-                orders = pd.DataFrame()  # Empty dataframe if no orders or column missing
-        
-        if not orders.empty:
-            # Debug output: show orders DataFrame
-            st.markdown("#### Debug: Orders DataFrame")
-            st.write(orders)
-            # Add edit functionality for admins only
-            if user_role == 'admin':
-                st.markdown("*Click on any row to edit (Admin only)*")
-            # Role-based column filtering
-            display_orders = orders.copy()
-            with tab2:
-                st.markdown("### Create New Order")
-                # --- Template Extraction UI ---
-                st.markdown("**Paste Order Template Below (optional):**")
-                template_text = st.text_area("Order Template", value="", key="order_template_text")
-                extract_clicked = st.button("Extract from Template", key="extract_template_btn")
-                # Fields to extract
-                # Flexible template extraction: support multiple label variants, case-insensitive, optional #
-                template_fields = {
-                    "customer_name": [r"(?:#)?name", r"(?:#)?customer_name", r"(?:#)?NAME", r"(?:#)?CUSTOMER_NAME"],
-                    "phone": [r"(?:#)?phone", r"(?:#)?phone_number", r"(?:#)?PHONE", r"(?:#)?PHONE_NUMBER"],
-                    "address": [r"(?:#)?full_address", r"(?:#)?full address", r"address", r"(?:#)?FULL_ADDRESS", r"(?:#)?ADDRESS"],
-                    "city": [r"(?:#)?city", r"(?:#)?CITY"],
-                    "pincode": [r"(?:#)?pincode", r"(?:#)?PINCODE"],
-                    "product": [r"(?:#)?product_name", r"(?:#)?product name", r"product", r"(?:#)?PRODUCT_NAME", r"(?:#)?PRODUCT"],
-                    "balance_to_pay": [r"(?:#)?balance_to_pay", r"(?:#)?balance to pay", r"(?:#)?balance", r"(?:#)?BALANCE_TO_PAY", r"(?:#)?BALANCE"],
-                    "advance_paid": [r"(?:#)?advance_paid", r"(?:#)?advance paid", r"(?:#)?advance", r"(?:#)?ADVANCE_PAID", r"(?:#)?ADVANCE"],
-                    "payment_method": [r"(?:#)?payment_type", r"(?:#)?payment type", r"(?:#)?PAYMENT_TYPE"]
-                }
-                # Session state for extracted values
-                if "order_form_extracted" not in st.session_state:
-                    st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
-                import re
-                if extract_clicked and template_text:
-                    extracted = {}
-                    debug_lines = []
-                    for key, patterns in template_fields.items():
-                        value = ""
-                        for pattern in patterns:
-                            match = re.search(rf"{pattern}\s*:\s*(.+)", template_text, re.IGNORECASE)
-                            if match:
-                                value = match.group(1).strip()
-                                debug_lines.append(f"Matched {pattern} for {key}: {value}")
-                                break
-                        # Fallback: try exact field name (strip #, upper/lower)
-                        if not value:
-                            for line in template_text.splitlines():
-                                line_clean = line.strip()
-                                if line_clean.lower().startswith(f"#{key}".lower()):
-                                    parts = line_clean.split(":", 1)
-                                    if len(parts) == 2:
-                                        value = parts[1].strip()
-                                        debug_lines.append(f"Fallback matched #{key} for {key}: {value}")
-                                        break
-                        extracted[key] = value
-                    st.session_state["order_form_extracted"] = extracted
-                    # Update session state for amounts if extracted
-                    try:
-                        st.session_state.balance_amount = float(extracted.get("balance_to_pay", "0") or "0")
-                    except ValueError:
-                        st.session_state.balance_amount = 0.0
-                    try:
-                        st.session_state.advance_amount = float(extracted.get("advance_paid", "0") or "0")
-                    except ValueError:
-                        st.session_state.advance_amount = 0.0
-                    # Always calculate total as sum
-                    st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
-                    st.info("\n".join(debug_lines))
-                    st.success("Fields extracted from template!")
-                    st.rerun()
-                # --- End Template Extraction UI ---
-                # Initialize session state for real-time calculations and order processing
-                if 'balance_amount' not in st.session_state:
-                    st.session_state.balance_amount = 0.0
-                if 'advance_amount' not in st.session_state:
-                    st.session_state.advance_amount = 0.0
-                if 'total_amount' not in st.session_state:
-                    st.session_state.total_amount = 0.0
-                if 'creating_order' not in st.session_state:
+                try:
+                    # Generate order ID
+                    order_id = f"ORD{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
+                    # Show spinner while processing
+                    with st.spinner("Creating order..."):
+                        # Prepare order data matching Excel schema
+                        order_data = {
+                            'order_id': order_id,
+                            'phone': phone,
+                            'customer_name': customer_name,
+                            'product': product,
+                            'quantity': 1,  # Default quantity
+                            'balance_to_pay': balance_to_pay,
+                            'advance_paid': advance_paid,
+                            'total': total_amount,
+                            'address': address,
+                            'city': city,
+                            'pincode': pincode,
+                            'payment_method': payment_method,
+                            'status': 'Pending',
+                            'timestamp': datetime.now().isoformat(),
+                            'ai_order_id': '',
+                            'tracking_id': '',
+                            'courier_name': '',
+                            'created_by': user.get('user_id'),
+                        }
+                        # Save to Excel with delay to show spinner effect
+                        import time
+                        time.sleep(1)  # Brief delay to show spinner
+                        success = services['orders'].create_order(order_data)
+                    # Reset loading state
                     st.session_state.creating_order = False
-                # ...existing code...
-                # Show loading spinner if creating order
-                if st.session_state.creating_order:
-                    from imiq.ui_components import render_loading_spinner
-                    render_loading_spinner("Creating your order... Please wait!")
-                    return  # Don't show the form while processing
-                with st.form("create_order"):
-                    # --- Amount fields moved inside the form ---
-                    col_balance, col_advance, col_total = st.columns([1, 1, 1])
-                    extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
-                    if extracted_balance is not None and extracted_balance != "":
-                        balance_default = str(extracted_balance)
-                    else:
-                        balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
-                    # Row 1: Customer Name and Phone
-                    st.markdown("#### 👤 Customer Information")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        customer_name = st.text_input("Customer Name *", placeholder="Enter customer name", value=st.session_state["order_form_extracted"].get("customer_name", ""), disabled=st.session_state.creating_order)
-                    with col2:
-                        phone = st.text_input("Phone Number *", placeholder="1234567890 (10 digits)", value=st.session_state["order_form_extracted"].get("phone", ""), disabled=st.session_state.creating_order)
-                    # Row 2: Address and City
-                    col3, col4 = st.columns(2)
-                    with col3:
-                        address = st.text_area("Address *", placeholder="Full address", height=100, value=st.session_state["order_form_extracted"].get("address", ""), disabled=st.session_state.creating_order)
-                    with col4:
-                        city = st.text_input("City *", placeholder="City name", value=st.session_state["order_form_extracted"].get("city", ""), disabled=st.session_state.creating_order)
-                    # Row 3: Pincode and Product
-                    col5, col6 = st.columns(2)
-                    with col5:
-                        pincode = st.text_input("Pincode *", placeholder="123456 (6 digits)", value=st.session_state["order_form_extracted"].get("pincode", ""), disabled=st.session_state.creating_order)
-                    with col6:
-                        product = st.text_area("Product Description *", placeholder="Product details", height=100, value=st.session_state["order_form_extracted"].get("product", ""), disabled=st.session_state.creating_order)
-                    # --- Amount fields just above Payment Mode ---
-                    col_balance, col_advance, col_total = st.columns([1, 1, 1])
-                    extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
-                    balance_default = str(extracted_balance) if extracted_balance not in (None, "") else str(st.session_state.balance_amount)
-                    with col_balance:
-                        st.markdown(f"<span style='color:black;'>Extracted Balance: {extracted_balance}, Session: {st.session_state.balance_amount}</span>", unsafe_allow_html=True)
-                        balance_input = st.text_input(
-                            "Balance to Pay *",
-                            value=str(st.session_state["order_form_extracted"].get("balance_to_pay", "")),
-                            disabled=st.session_state.creating_order
-                        )
-                    extracted_advance = st.session_state["order_form_extracted"].get("advance_paid", None)
-                    advance_default = str(extracted_advance) if extracted_advance not in (None, "") else str(st.session_state.advance_amount)
-                    with col_advance:
-                        st.markdown(f"<span style='color:black;'>Extracted Advance: {extracted_advance}, Session: {st.session_state.advance_amount}</span>", unsafe_allow_html=True)
-                        advance_input = st.text_input(
-                            "Advance Paid",
-                            value=str(st.session_state["order_form_extracted"].get("advance_paid", "")),
-                            disabled=st.session_state.creating_order
-                        )
-                    # Payment type dropdown
-                    payment_types = ["COD", "Prepaid"]
-                    extracted_payment = st.session_state["order_form_extracted"].get("payment_method", "")
-                    payment_method = st.selectbox(
-                        "Payment Type *",
-                        payment_types,
-                        index=payment_types.index(extracted_payment) if extracted_payment in payment_types else 0,
-                        disabled=st.session_state.creating_order
-                    )
-                    # Calculate and show total
-                    # Use extracted values if input fields are empty
-                    balance_val = balance_input if balance_input not in (None, "") else extracted_balance
-                    advance_val = advance_input if advance_input not in (None, "") else extracted_advance
-                    try:
-                        st.session_state.balance_amount = float(balance_val) if balance_val not in (None, "") else 0.0
-                    except ValueError:
+                    if success:
+                        st.session_state["order_success"] = {
+                            "order_id": order_id,
+                            "total_amount": total_amount,
+                            "customer_name": customer_name,
+                            "phone": phone
+                        }
+                        # Reset amount session state
                         st.session_state.balance_amount = 0.0
-                    try:
-                        st.session_state.advance_amount = float(advance_val) if advance_val not in (None, "") else 0.0
-                    except ValueError:
                         st.session_state.advance_amount = 0.0
-                    st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
-                    with col_total:
-                        st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
-                    # Enable Create Order button only if all required fields are filled and total_amount > 0
-                    required_fields_filled = all([
-                        customer_name,
-                        phone,
-                        address,
-                        city,
-                        pincode,
-                        product,
-                        st.session_state.total_amount > 0
-                    ])
-                    submitted = st.form_submit_button(
-                        "🛒 Create Order", 
-                        width='stretch', 
-                        type="primary", 
-                        disabled=st.session_state.creating_order or not required_fields_filled
-                    )
-                    if submitted:
-                        # Set loading state
-                        st.session_state.creating_order = True
-                        # Get financial values from session state
-                        balance_to_pay = st.session_state.balance_amount
-                        advance_paid = st.session_state.advance_amount
-                        total_amount = st.session_state.total_amount
-                        # Validation
-                        required_fields = [customer_name, phone, address, city, pincode, product]
-                        if not all(required_fields) or balance_to_pay <= 0:
-                            st.session_state.creating_order = False
-                            st.error("❌ Please fill all required fields and ensure balance to pay is greater than 0")
-                        else:
-                            try:
-                                # Generate order ID
-                                order_id = f"ORD{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
-                                # Show spinner while processing
-                                with st.spinner("Creating order..."):
-                                    # Prepare order data matching Excel schema
-                                    order_data = {
-                                        'order_id': order_id,
-                                        'phone': phone,
-                                        'customer_name': customer_name,
-                                        'product': product,
-                                        'quantity': 1,  # Default quantity
-                                        'balance_to_pay': balance_to_pay,
-                                        'advance_paid': advance_paid,
-                                        'total': total_amount,
-                                        'address': address,
-                                        'city': city,
-                                        'pincode': pincode,
-                                        'payment_method': payment_method,
-                                        'status': 'Pending',
-                                        'timestamp': datetime.now().isoformat(),
-                                        'ai_order_id': '',
-                                        'tracking_id': '',
-                                        'courier_name': '',
-                                        'created_by': user.get('user_id'),
-                                    }
-                                    # Save to Excel with delay to show spinner effect
-                                    import time
-                                    time.sleep(1)  # Brief delay to show spinner
-                                    success = services['orders'].create_order(order_data)
-                                # Reset loading state
-                                st.session_state.creating_order = False
-                                if success:
-                                    st.success(f"✅ Order created successfully!")
-                                    st.info(f"📦 Order ID: **{order_id}**")
-                                    st.info(f"💰 Total Amount: **₹{total_amount:.2f}**")
-                                    st.info(f"📱 Customer: **{customer_name}** ({phone})")
-                                    # Reset amount session state
-                                    st.session_state.balance_amount = 0.0
-                                    st.session_state.advance_amount = 0.0
-                                    st.session_state.total_amount = 0.0
-                                    st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
-                                    success_animation()
-                                    # Manual refresh button
-                                    if st.button("🔄 Refresh Form", key="refresh_order_form_btn"):
-                                        st.rerun()
-                                else:
-                                    st.error("❌ Failed to create order. Please try again.")
-                            except Exception as e:
-                                st.session_state.creating_order = False
-                                st.error(f"❌ Error creating order: {str(e)}")
-                                error_animation()
+                        st.session_state.total_amount = 0.0
+                        st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
+                        success_animation()
+                    else:
+                        st.error("❌ Failed to create order. Please try again.")
+                except Exception as e:
+                    st.session_state.creating_order = False
+                    st.error(f"❌ Error creating order: {str(e)}")
+                    error_animation()
+
+    # Show order success popup and refresh button outside the form
+    if "order_success" in st.session_state:
+        order_info = st.session_state["order_success"]
+        st.success(f"✅ Order created successfully!")
+        st.info(f"📦 Order ID: **{order_info['order_id']}**")
+        st.info(f"💰 Total Amount: **₹{order_info['total_amount']:.2f}**")
+        st.info(f"📱 Customer: **{order_info['customer_name']}** ({order_info['phone']})")
+        if st.button("🔄 Refresh Form", key="refresh_order_form_btn"):
+            del st.session_state["order_success"]
+            st.rerun()
     
     with tab3:
         st.markdown("### Search Orders")
@@ -1586,249 +1365,162 @@ def render_analytics_page(services, user):
                         'total_order_value': total_order_value,
                         'cod_return_rate': cod_return_rate,
                         'sku_mix': [
-                            {"sku": "A", "units": sku_a_units, "product_cost": sku_a_cost, "selling_price": sku_a_price},
-                            {"sku": "B", "units": sku_b_units, "product_cost": sku_b_cost, "selling_price": sku_b_price}
-                        ]
-                    }
-                    
-                    # Calculate KPIs
-                    kpis = compute_kpis(kpi_data)
-                    
-                    # Store in session state
-                    st.session_state.calculated_kpis = kpis
-                    st.success("✅ KPIs calculated successfully!")
-                    
-                except ValueError as e:
-                    st.error(f"❌ Calculation Error: {str(e)}")
-                except Exception as e:
-                    st.error(f"❌ Unexpected Error: {str(e)}")
-        
-        # Display results if available
-        if 'calculated_kpis' in st.session_state:
-            kpis = st.session_state.calculated_kpis
-            
-            st.markdown("---")
-            st.markdown("### 📊 KPI Results")
-            
-            # Key Performance Metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Revenue", f"₹{kpis['total_revenue']:,.2f}", delta=f"{kpis['net_margin_percentage']:.1f}% margin")
-            with col2:
-                st.metric("Net Profit", f"₹{kpis['net_profit_after_sourcing']:,.2f}")
-            with col3:
-                st.metric("Gross Margin", f"{kpis['gross_margin_percentage']:.1f}%")
-            with col4:
-                st.metric("CPA", f"₹{kpis['cpa']:,.2f}")
-            
-            # Cost Breakdown
-            st.markdown("#### 💸 Cost Breakdown")
-            cost_cols = st.columns(5)
-            with cost_cols[0]:
-                st.metric("Ad Spend", f"₹{kpis['total_ad_spend']:,.2f}")
-            with cost_cols[1]:
-                st.metric("Product Cost", f"₹{kpis['total_product_cost']:,.2f}") 
-            with cost_cols[2]:
-                st.metric("Courier Cost", f"₹{kpis['total_courier_cost']:,.2f}")
-            with cost_cols[3]:
-                st.metric("Salary Cost", f"₹{kpis['salary_cost']:,.2f}")
-            with cost_cols[4]:
-                st.metric("Sourcing Cost", f"₹{kpis['sourcing_payment']:,.2f}")
-            
-            # COD-Adjusted Metrics
-            st.markdown("#### 📦 COD-Adjusted Performance")
-            cod_cols = st.columns(4)
-            with cod_cols[0]:
-                st.metric("Delivered Orders", f"{kpis['delivered_orders']}")
-            with cod_cols[1]:
-                st.metric("Delivered Revenue", f"₹{kpis['delivered_revenue']:,.2f}")
-            with cod_cols[2]:
-                st.metric("Delivered Profit", f"₹{kpis['delivered_profit']:,.2f}")
-            with cod_cols[3]:
-                st.metric("Return Rate", f"{kpis['cod_return_rate_percentage']:.1f}%")
-            
-            # Monthly Projections
-            st.markdown("#### 📈 Monthly Projections (30 Days)")
-            proj_cols = st.columns(4)
-            with proj_cols[0]:
-                st.metric("Projected Orders", f"{kpis['monthly_projected_orders']}")
-            with proj_cols[1]:
-                st.metric("Projected Revenue", f"₹{kpis['monthly_projected_revenue']:,.2f}")
-            with proj_cols[2]:
-                st.metric("Projected Profit", f"₹{kpis['monthly_projected_profit']:,.2f}")
-            with proj_cols[3]:
-                st.metric("Projected Ad Spend", f"₹{kpis['monthly_projected_ad_spend']:,.2f}")
-            
-            # Strategic Insights
-            st.markdown("#### 🎯 Strategic Insights")
-            insight_cols = st.columns(3)
-            with insight_cols[0]:
-                st.metric("Break-even Orders", f"{kpis['break_even_orders']}")
-            with insight_cols[1]:
-                st.metric("Orders Above B.E.", f"{kpis['orders_above_break_even']}")
-            with insight_cols[2]:
-                st.metric("Contribution/Order", f"₹{kpis['contribution_margin_per_order']:,.2f}")
-    
-    with tab2:
-        st.markdown("### 📅 Date-wise Business Analytics")
-        st.markdown("Get comprehensive business details by date including orders, revenue, and expenses")
-        
-        # Import business analytics
-        from imiq.business_analytics import get_business_analytics_instance
-        business_analytics = get_business_analytics_instance(services['storage'])
-        
-        # Date selection and analysis type
-        col1, col2, col3 = st.columns([2, 2, 1])
-        
-        with col1:
-            analysis_type = st.selectbox(
-                "Analysis Type",
-                ["Single Date", "Date Range"],
-                index=0
-            )
-        
-        with col2:
-            if analysis_type == "Single Date":
-                selected_date = st.date_input(
-                    "Select Date",
-                    value=datetime.now().date(),
-                    key="single_date_picker"
-                )
-            else:
-                date_range = st.date_input(
-                    "Select Date Range",
-                    value=(datetime.now().date() - timedelta(days=7), datetime.now().date()),
-                    key="date_range_picker"
-                )
-        
-        with col3:
-            if st.button("📊 Analyze", type="primary", use_container_width=True, key="analyze_date_data"):
-                with st.spinner("Fetching business data..."):
-                    try:
-                        if analysis_type == "Single Date":
-                            analytics_data = business_analytics.get_comprehensive_date_analytics(selected_date)
-                            st.session_state.date_analytics = analytics_data
-                            st.success("✅ Analytics generated!")
-                        else:
-                            if isinstance(date_range, tuple) and len(date_range) == 2:
-                                start_date, end_date = date_range
-                                analytics_data = business_analytics.get_date_range_analytics(start_date, end_date)
-                                st.session_state.range_analytics = analytics_data
-                                st.success("✅ Range analytics generated!")
-                            else:
-                                st.error("Please select both start and end dates")
-                    except Exception as e:
-                        st.error(f"❌ Error generating analytics: {str(e)}")
-        
-        # Display Single Date Analytics
-        if analysis_type == "Single Date" and 'date_analytics' in st.session_state:
-            data = st.session_state.date_analytics
-            
-            if 'error' not in data:
-                st.markdown("---")
-                st.markdown(f"### 📊 Business Analytics for {data['date']}")
-                
-                # Key Metrics Row
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Orders", data['orders']['order_count'])
-                with col2:
-                    st.metric("Revenue", f"₹{data['orders']['total_amount']:,.2f}")
-                with col3:
-                    st.metric("Ad Spend", f"₹{data['revenue']['ad_spend']:,.2f}")
-                with col4:
-                    st.metric("Net Profit", f"₹{data['analytics']['net_profit_after_expenses']:,.2f}")
-                
-                # Detailed Breakdown
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("#### 📋 Order Details")
-                    if data['orders']['orders']:
-                        orders_df = pd.DataFrame(data['orders']['orders'])
-                        st.dataframe(orders_df, use_container_width=True)
-                    else:
-                        st.info("No orders found for this date")
-                    
-                    st.markdown("#### 📊 Financial Metrics")
-                    financial_metrics = {
-                        "Gross Profit": f"₹{data['analytics']['gross_profit']:,.2f}",
-                        "Product Cost": f"₹{data['analytics']['total_product_cost']:,.2f}",
-                        "Avg Order Value": f"₹{data['analytics']['avg_order_value']:,.2f}",
-                        "Cost Per Acquisition": f"₹{data['analytics']['cost_per_acquisition']:,.2f}",
-                        "Profit Margin": f"{data['analytics']['profit_margin_percentage']}%"
-                    }
-                    
-                    for metric, value in financial_metrics.items():
-                        st.write(f"**{metric}:** {value}")
-                
-                with col2:
-                    st.markdown("#### 💸 Revenue & Expenses")
-                    expense_data = {
-                        "Ad Spend": data['revenue']['ad_spend'],
-                        "Courier Expenses": data['revenue']['courier_expenses'],
-                        "Other Expenses": data['revenue']['other_expenses']
-                    }
-                    
-                    # Create pie chart for expenses
-                    if sum(expense_data.values()) > 0:
-                        expense_df = pd.DataFrame(list(expense_data.items()), columns=['Type', 'Amount'])
-                        expense_df = expense_df[expense_df['Amount'] > 0]  # Filter non-zero expenses
-                        
-                        if not expense_df.empty:
-                            fig = px.pie(expense_df, values='Amount', names='Type', 
-                                       title='Expense Breakdown')
-                            fig.update_traces(textposition='inside', textinfo='percent+label')
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.info("No expenses recorded for this date")
-                    else:
-                        st.info("No expenses recorded for this date")
-                    
-                    if data['revenue']['notes']:
-                        st.markdown("#### 📝 Notes")
-                        st.write(data['revenue']['notes'])
-            else:
-                st.error(f"❌ Error: {data['error']}")
-        
-        # Display Date Range Analytics
-        elif analysis_type == "Date Range" and 'range_analytics' in st.session_state:
-            data = st.session_state.range_analytics
-            
-            if 'error' not in data:
-                st.markdown("---")
-                st.markdown(f"### 📊 Business Analytics: {data['start_date']} to {data['end_date']}")
-                
-                # Summary Metrics
-                summary = data['summary']
-                col1, col2, col3, col4, col5 = st.columns(5)
-                
-                with col1:
-                    st.metric("Total Orders", summary['total_orders'])
-                with col2:
-                    st.metric("Total Revenue", f"₹{summary['total_revenue']:,.2f}")
-                with col3:
-                    st.metric("Net Profit", f"₹{summary['net_profit']:,.2f}")
-                with col4:
-                    st.metric("Avg Orders/Day", f"{summary['avg_orders_per_day']:.1f}")
-                with col5:
-                    st.metric("Profit Margin", f"{summary['profit_margin']:.1f}%")
-                
-                # Daily Trend Chart
-                if data['daily_data']:
-                    st.markdown("#### 📈 Daily Revenue Trend")
-                    
-                    daily_chart_data = []
-                    for day_data in data['daily_data']:
-                        daily_chart_data.append({
-                            'Date': day_data['date'],
-                            'Revenue': day_data['orders']['total_amount'],
-                            'Orders': day_data['orders']['order_count'],
-                            'Ad Spend': day_data['revenue']['ad_spend'],
-                            'Net Profit': day_data['analytics']['net_profit_after_expenses']
-                        })
-                    
-                    chart_df = pd.DataFrame(daily_chart_data)
+                            {'sku': 'A', 'units': sku_a_units, 'product_cost': sku_a_cost, 'selling_price': sku_a_price},
+                            {'sku': 'B', 'units': sku_b_units, 'product_cost': sku_b_cost, 'selling_price': sku_b_price},
+                        ],
+                                extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+                                if extracted_balance is not None and extracted_balance != "":
+                                    balance_default = str(extracted_balance)
+                                else:
+                                    balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
+                                # Row 1: Customer Name and Phone
+                                st.markdown("#### 👤 Customer Information")
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    customer_name = st.text_input("Customer Name *", placeholder="Enter customer name", value=st.session_state["order_form_extracted"].get("customer_name", ""), disabled=st.session_state.creating_order)
+                                with col2:
+                                    phone = st.text_input("Phone Number *", placeholder="1234567890 (10 digits)", value=st.session_state["order_form_extracted"].get("phone", ""), disabled=st.session_state.creating_order)
+                                # Row 2: Address and City
+                                col3, col4 = st.columns(2)
+                                with col3:
+                                    address = st.text_area("Address *", placeholder="Full address", height=100, value=st.session_state["order_form_extracted"].get("address", ""), disabled=st.session_state.creating_order)
+                                with col4:
+                                    city = st.text_input("City *", placeholder="City name", value=st.session_state["order_form_extracted"].get("city", ""), disabled=st.session_state.creating_order)
+                                # Row 3: Pincode and Product
+                                col5, col6 = st.columns(2)
+                                with col5:
+                                    pincode = st.text_input("Pincode *", placeholder="123456 (6 digits)", value=st.session_state["order_form_extracted"].get("pincode", ""), disabled=st.session_state.creating_order)
+                                with col6:
+                                    product = st.text_area("Product Description *", placeholder="Product details", height=100, value=st.session_state["order_form_extracted"].get("product", ""), disabled=st.session_state.creating_order)
+                                # --- Amount fields just above Payment Mode ---
+                                col_balance, col_advance, col_total = st.columns([1, 1, 1])
+                                extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
+                                balance_default = str(extracted_balance) if extracted_balance not in (None, "") else str(st.session_state.balance_amount)
+                                with col_balance:
+                                    st.markdown(f"<span style='color:black;'>Extracted Balance: {extracted_balance}, Session: {st.session_state.balance_amount}</span>", unsafe_allow_html=True)
+                                    balance_input = st.text_input(
+                                        "Balance to Pay *",
+                                        value=str(st.session_state["order_form_extracted"].get("balance_to_pay", "")),
+                                        disabled=st.session_state.creating_order
+                                    )
+                                extracted_advance = st.session_state["order_form_extracted"].get("advance_paid", None)
+                                advance_default = str(extracted_advance) if extracted_advance not in (None, "") else str(st.session_state.advance_amount)
+                                with col_advance:
+                                    st.markdown(f"<span style='color:black;'>Extracted Advance: {extracted_advance}, Session: {st.session_state.advance_amount}</span>", unsafe_allow_html=True)
+                                    advance_input = st.text_input(
+                                        "Advance Paid",
+                                        value=str(st.session_state["order_form_extracted"].get("advance_paid", "")),
+                                        disabled=st.session_state.creating_order
+                                    )
+                                # Payment type dropdown
+                                payment_types = ["COD", "Prepaid"]
+                                extracted_payment = st.session_state["order_form_extracted"].get("payment_method", "")
+                                # Case-insensitive match for extracted payment type
+                                payment_index = 0
+                                for i, p in enumerate(payment_types):
+                                    if extracted_payment.strip().lower() == p.lower():
+                                        payment_index = i
+                                        break
+                                payment_method = st.selectbox(
+                                    "Payment Type *",
+                                    payment_types,
+                                    index=payment_index,
+                                    disabled=st.session_state.creating_order
+                                )
+                                # Calculate and show total
+                                balance_val = balance_input if balance_input not in (None, "") else extracted_balance
+                                advance_val = advance_input if advance_input not in (None, "") else extracted_advance
+                                try:
+                                    st.session_state.balance_amount = float(balance_val) if balance_val not in (None, "") else 0.0
+                                except ValueError:
+                                    st.session_state.balance_amount = 0.0
+                                try:
+                                    st.session_state.advance_amount = float(advance_val) if advance_val not in (None, "") else 0.0
+                                except ValueError:
+                                    st.session_state.advance_amount = 0.0
+                                st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
+                                with col_total:
+                                    st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
+                                # Enable Create Order button only if all required fields are filled and total_amount > 0
+                                required_fields_filled = all([
+                                    customer_name,
+                                    phone,
+                                    address,
+                                    city,
+                                    pincode,
+                                    product,
+                                    st.session_state.total_amount > 0
+                                ])
+                                submitted = st.form_submit_button(
+                                    "🛒 Create Order", 
+                                    width='stretch', 
+                                    type="primary", 
+                                    disabled=st.session_state.creating_order or not required_fields_filled
+                                )
+                                if submitted:
+                                    # Set loading state
+                                    st.session_state.creating_order = True
+                                    # Get financial values from session state
+                                    balance_to_pay = st.session_state.balance_amount
+                                    advance_paid = st.session_state.advance_amount
+                                    total_amount = st.session_state.total_amount
+                                    # Validation
+                                    required_fields = [customer_name, phone, address, city, pincode, product]
+                                    if not all(required_fields) or balance_to_pay <= 0:
+                                        st.session_state.creating_order = False
+                                        st.error("❌ Please fill all required fields and ensure balance to pay is greater than 0")
+                                    else:
+                                        try:
+                                            # Generate order ID
+                                            order_id = f"ORD{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:8].upper()}"
+                                            # Show spinner while processing
+                                            with st.spinner("Creating order..."):
+                                                # Prepare order data matching Excel schema
+                                                order_data = {
+                                                    'order_id': order_id,
+                                                    'phone': phone,
+                                                    'customer_name': customer_name,
+                                                    'product': product,
+                                                    'quantity': 1,  # Default quantity
+                                                    'balance_to_pay': balance_to_pay,
+                                                    'advance_paid': advance_paid,
+                                                    'total': total_amount,
+                                                    'address': address,
+                                                    'city': city,
+                                                    'pincode': pincode,
+                                                    'payment_method': payment_method,
+                                                    'status': 'Pending',
+                                                    'timestamp': datetime.now().isoformat(),
+                                                    'ai_order_id': '',
+                                                    'tracking_id': '',
+                                                    'courier_name': '',
+                                                    'created_by': user.get('user_id'),
+                                                }
+                                                # Save to Excel with delay to show spinner effect
+                                                import time
+                                                time.sleep(1)  # Brief delay to show spinner
+                                                success = services['orders'].create_order(order_data)
+                                            # Reset loading state
+                                            st.session_state.creating_order = False
+                                            if success:
+                                                st.session_state["order_success"] = {
+                                                    "order_id": order_id,
+                                                    "total_amount": total_amount,
+                                                    "customer_name": customer_name,
+                                                    "phone": phone
+                                                }
+                                                # Reset amount session state
+                                                st.session_state.balance_amount = 0.0
+                                                st.session_state.advance_amount = 0.0
+                                                st.session_state.total_amount = 0.0
+                                                st.session_state["order_form_extracted"] = {k: "" for k in template_fields}
+                                                success_animation()
+                                            else:
+                                                st.error("❌ Failed to create order. Please try again.")
+                                        except Exception as e:
+                                            st.session_state.creating_order = False
+                                            st.error(f"❌ Error creating order: {str(e)}")
+                                            error_animation()
                     
                     # Revenue and Profit chart
                     st.line_chart(chart_df.set_index('Date')[['Revenue', 'Net Profit']])
