@@ -1,0 +1,127 @@
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/auth/__init__.py:54: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/oauth2/__init__.py:40: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+✅ Connected to Google Sheets: CZ_MasterSheet
+================================================================================
+🚀 CRAZYSHOPPERZ MASTER TEST SUITE
+🔍 COMPREHENSIVE TESTING - GOOGLE SHEETS ONLY
+================================================================================
+
+🔍 RUNNING SHEET DISCOVERY
+📊 Discovered 10 sheets:
+   ✅ Users: 5 rows × 8 columns
+   ✅ Performance: 7 rows × 4 columns
+   ✅ Customers: 6 rows × 8 columns
+   ✅ ChatLogs: 14 rows × 13 columns
+   ⚠️ OrderStages: Empty or headers only (10 columns)
+   ✅ AI_Prompts: 1 rows × 4 columns
+   ✅ NewOrders: 58 rows × 22 columns
+   ✅ ProductList: 4 rows × 8 columns
+   ✅ ChatAssignments: 3 rows × 4 columns
+   ✅ Settings: 6 rows × 6 columns
+
+🚀 RUNNING COMPREHENSIVE FLOW TESTS
+✅ Comprehensive flow tests completed successfully
+
+🧪 RUNNING INDIVIDUAL SHEET TESTS
+❌ Individual sheet tests failed
+Error: /Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/auth/__init__.py:54: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/oauth2/__init__.py:40: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+Traceback (most recent call last):
+  File "/Users/i0s04a6/Documents/GitHub/CrazyShopperz/test_individual_sheets.py", line 477, in <module>
+    success = main()
+  File "/Users/i0s04a6/Documents/GitHub/CrazyShopperz/test_individual_sheets.py", line 444, in main
+    performance_tester = PerformanceSheetTester()
+  File "/Users/i0s04a6/Documents/GitHub/CrazyShopperz/test_individual_sheets.py", line 30, in __init__
+    self.setup_connection()
+  File "/Users/i0s04a6/Documents/GitHub/CrazyShopperz/test_individual_sheets.py", line 43, in setup_connection
+    self.spreadsheet = self.gc.open_by_key(self.sheet_id)
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/client.py", line 174, in open_by_key
+    raise ex
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/client.py", line 168, in open_by_key
+    spreadsheet = Spreadsheet(self.http_client, {"id": key})
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/spreadsheet.py", line 29, in __init__
+    metadata = self.fetch_sheet_metadata()
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/spreadsheet.py", line 230, in fetch_sheet_metadata
+    return self.client.fetch_sheet_metadata(self.id, params=params)
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/http_client.py", line 305, in fetch_sheet_metadata
+    r = self.request("get", url, params=params)
+  File "/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/gspread/http_client.py", line 128, in request
+    raise APIError(response)
+gspread.exceptions.APIError: APIError: [429]: Quota exceeded for quota metric 'Read requests' and limit 'Read requests per minute per user' of service 'sheets.googleapis.com' for consumer 'project_number:573111672604'.
+
+
+🚀 RUNNING ADVANCED SHEET TESTS
+❌ Advanced sheet tests failed
+Error: /Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/auth/__init__.py:54: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/google/oauth2/__init__.py:40: FutureWarning: You are using a Python version 3.9 past its end of life. Google will update google-auth with critical bug fixes on a best-effort basis, but not with any other fixes or features. Please upgrade your Python version, and then update google-auth.
+  warnings.warn(eol_message.format("3.9"), FutureWarning)
+/Users/i0s04a6/Library/Python/3.9/lib/python/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+
+
+🔗 RUNNING INTEGRATION TESTS
+   🔄 Testing Users-Orders Integration
+       ❌ Users-Orders integration: Missing data
+   🔄 Testing Customers-Orders Integration
+       ❌ Customers-Orders integration: Missing data
+   🔄 Testing Products-Orders Integration
+       ❌ Products-Orders integration: Missing data
+   🔄 Testing AI-Chat Integration
+       ❌ AI-Chat integration: Missing data
+   📊 Integration Score: 0.0% (0/4)
+
+================================================================================
+📊 MASTER TEST SUITE - FINAL REPORT
+================================================================================
+🕒 Test Duration: 0:00:34.359387
+📅 Completed: 2026-02-13 07:48:17
+🔗 Google Sheets ID: 1prxGZVz3jccpjI3nEk7wwSfnsTSth5205qUzP_6fIM4
+📋 Spreadsheet: CZ_MasterSheet
+
+📋 TEST SUITE RESULTS:
+✅ Sheet Discovery
+       📊 9/10 sheets successfully accessed
+✅ Comprehensive Flows
+❌ Individual Sheets
+❌ Advanced Sheets
+✅ Integration Tests
+       🔗 Integration Score: 0.0%
+
+🎯 OVERALL TEST SUCCESS RATE: 60.0% (3/5)
+🏥 SYSTEM HEALTH: 🟠 FAIR - Some functionality impaired
+
+✅ TESTED FLOWS:
+   ✅ Register Flow
+   ✅ Login Flow
+   ✅ Dashboard Flow
+   ✅ Performance Flow
+   ✅ Orders Flow
+   ✅ Create Orders Flow
+   ✅ Lookup Flow
+   ✅ Reports Flow
+   ✅ AI Integration Flow
+
+📊 TESTED SHEETS:
+   📋 Users
+   📋 Performance
+   📋 Customers
+   📋 ChatLogs
+   📋 OrderStages
+   📋 AI_Prompts
+   📋 NewOrders
+   📋 ProductList
+   📋 ChatAssignments
+   📋 Settings
+
+💾 Master report saved: master_test_report_20260213_074817.json
+
+⚠️ MASTER TEST SUITE COMPLETED WITH ISSUES
