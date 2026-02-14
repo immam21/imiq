@@ -398,6 +398,9 @@ def render_dashboard(services, user):
     # Show current status of orders (admin: all, user: own) WITHIN dashboard, not at the top
     orders_df = services['orders'].get_user_orders(user['user_id']) if is_user else services['orders'].get_all_orders()
     st.markdown('### 📦 Current Order Status')
+    # Ensure phone column is string type for Arrow compatibility
+    if not orders_df.empty and 'phone' in orders_df.columns:
+        orders_df['phone'] = orders_df['phone'].astype(str)
     if not orders_df.empty and 'status' in orders_df.columns:
         status_counts = orders_df['status'].value_counts().reset_index()
         status_counts.columns = ['Status', 'Count']
@@ -702,7 +705,12 @@ def render_orders_page(services, user):
             st.markdown("### All Orders (Admin View)")
             
             with st.spinner('📦 Loading all orders...'):
-                orders = services['orders'].get_all_orders()
+                # Use session cache to avoid quota errors
+                if 'cached_orders' in st.session_state:
+                    orders = st.session_state['cached_orders']
+                else:
+                    orders = services['orders'].get_all_orders()
+                    st.session_state['cached_orders'] = orders
                 
             if not orders.empty:
                 st.info(f"📊 Showing {len(orders)} total orders (Admin view)")
@@ -778,7 +786,12 @@ def render_orders_page(services, user):
         else:
             st.markdown("### My Orders")
             # For regular users, filter strictly by user_id
-            all_orders = services['orders'].get_all_orders()
+            # Use session cache for user orders
+            if 'cached_orders' in st.session_state:
+                all_orders = st.session_state['cached_orders']
+            else:
+                all_orders = services['orders'].get_all_orders()
+                st.session_state['cached_orders'] = all_orders
             if not all_orders.empty and 'created_by' in all_orders.columns:
                 user_id = user.get('user_id')
                 orders = all_orders[all_orders['created_by'].astype(str) == str(user_id)]
@@ -787,10 +800,12 @@ def render_orders_page(services, user):
                 orders = pd.DataFrame()  # Empty dataframe if no orders or column missing
         
         if not orders.empty:
+            # Debug output: show orders DataFrame
+            st.markdown("#### Debug: Orders DataFrame")
+            st.write(orders)
             # Add edit functionality for admins only
             if user_role == 'admin':
                 st.markdown("*Click on any row to edit (Admin only)*")
-            
             # Role-based column filtering
             display_orders = orders.copy()
             with tab2:
@@ -802,16 +817,15 @@ def render_orders_page(services, user):
                 # Fields to extract
                 # Flexible template extraction: support multiple label variants, case-insensitive, optional #
                 template_fields = {
-                    "customer_name": [r"(?:#)?name", r"(?:#)?customer_name"],
-                    "phone": [r"(?:#)?phone", r"(?:#)?phone_number"],
-                    "address": [r"(?:#)?full_address", r"(?:#)?full address", r"address"],
-                    "city": [r"(?:#)?city"],
-                    "pincode": [r"(?:#)?pincode"],
-                    "product": [r"(?:#)?product_name", r"(?:#)?product name", r"product"],
-                    "balance_to_pay": [r"(?:#)?balance_to_pay", r"(?:#)?balance to pay", r"(?:#)?balance"],
-                    "advance_paid": [r"(?:#)?advance_paid", r"(?:#)?advance paid", r"(?:#)?advance"],
-                    "total": [r"(?:#)?total"],
-                    "payment_method": [r"(?:#)?payment_type", r"(?:#)?payment type"]
+                    "customer_name": [r"(?:#)?name", r"(?:#)?customer_name", r"(?:#)?NAME", r"(?:#)?CUSTOMER_NAME"],
+                    "phone": [r"(?:#)?phone", r"(?:#)?phone_number", r"(?:#)?PHONE", r"(?:#)?PHONE_NUMBER"],
+                    "address": [r"(?:#)?full_address", r"(?:#)?full address", r"address", r"(?:#)?FULL_ADDRESS", r"(?:#)?ADDRESS"],
+                    "city": [r"(?:#)?city", r"(?:#)?CITY"],
+                    "pincode": [r"(?:#)?pincode", r"(?:#)?PINCODE"],
+                    "product": [r"(?:#)?product_name", r"(?:#)?product name", r"product", r"(?:#)?PRODUCT_NAME", r"(?:#)?PRODUCT"],
+                    "balance_to_pay": [r"(?:#)?balance_to_pay", r"(?:#)?balance to pay", r"(?:#)?balance", r"(?:#)?BALANCE_TO_PAY", r"(?:#)?BALANCE"],
+                    "advance_paid": [r"(?:#)?advance_paid", r"(?:#)?advance paid", r"(?:#)?advance", r"(?:#)?ADVANCE_PAID", r"(?:#)?ADVANCE"],
+                    "payment_method": [r"(?:#)?payment_type", r"(?:#)?payment type", r"(?:#)?PAYMENT_TYPE"]
                 }
                 # Session state for extracted values
                 if "order_form_extracted" not in st.session_state:
@@ -849,6 +863,7 @@ def render_orders_page(services, user):
                         st.session_state.advance_amount = float(extracted.get("advance_paid", "0") or "0")
                     except ValueError:
                         st.session_state.advance_amount = 0.0
+                    # Always calculate total as sum
                     st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
                     st.info("\n".join(debug_lines))
                     st.success("Fields extracted from template!")
@@ -899,53 +914,62 @@ def render_orders_page(services, user):
                     # --- Amount fields just above Payment Mode ---
                     col_balance, col_advance, col_total = st.columns([1, 1, 1])
                     extracted_balance = st.session_state["order_form_extracted"].get("balance_to_pay", None)
-                    if extracted_balance is not None and extracted_balance != "":
-                        balance_default = str(extracted_balance)
-                    else:
-                        balance_default = str(st.session_state.balance_amount) if st.session_state.balance_amount != 0 else ""
+                    balance_default = str(extracted_balance) if extracted_balance not in (None, "") else str(st.session_state.balance_amount)
                     with col_balance:
+                        st.markdown(f"<span style='color:black;'>Extracted Balance: {extracted_balance}, Session: {st.session_state.balance_amount}</span>", unsafe_allow_html=True)
                         balance_input = st.text_input(
-                            "Balance to Pay *", 
-                            value=balance_default,
-                            placeholder="0",
-                            key="balance_realtime_input",
+                            "Balance to Pay *",
+                            value=str(st.session_state["order_form_extracted"].get("balance_to_pay", "")),
                             disabled=st.session_state.creating_order
                         )
                     extracted_advance = st.session_state["order_form_extracted"].get("advance_paid", None)
-                    if extracted_advance is not None and extracted_advance != "":
-                        advance_default = str(extracted_advance)
-                    else:
-                        advance_default = str(st.session_state.advance_amount) if st.session_state.advance_amount != 0 else ""
+                    advance_default = str(extracted_advance) if extracted_advance not in (None, "") else str(st.session_state.advance_amount)
                     with col_advance:
+                        st.markdown(f"<span style='color:black;'>Extracted Advance: {extracted_advance}, Session: {st.session_state.advance_amount}</span>", unsafe_allow_html=True)
                         advance_input = st.text_input(
-                            "Advance Paid", 
-                            value=advance_default,
-                            placeholder="0",
-                            key="advance_realtime_input",
+                            "Advance Paid",
+                            value=str(st.session_state["order_form_extracted"].get("advance_paid", "")),
                             disabled=st.session_state.creating_order
                         )
+                    # Payment type dropdown
+                    payment_types = ["COD", "Prepaid"]
+                    extracted_payment = st.session_state["order_form_extracted"].get("payment_method", "")
+                    payment_method = st.selectbox(
+                        "Payment Type *",
+                        payment_types,
+                        index=payment_types.index(extracted_payment) if extracted_payment in payment_types else 0,
+                        disabled=st.session_state.creating_order
+                    )
                     # Calculate and show total
+                    # Use extracted values if input fields are empty
+                    balance_val = balance_input if balance_input not in (None, "") else extracted_balance
+                    advance_val = advance_input if advance_input not in (None, "") else extracted_advance
                     try:
-                        st.session_state.balance_amount = float(balance_input) if balance_input else 0.0
+                        st.session_state.balance_amount = float(balance_val) if balance_val not in (None, "") else 0.0
                     except ValueError:
                         st.session_state.balance_amount = 0.0
                     try:
-                        st.session_state.advance_amount = float(advance_input) if advance_input else 0.0
+                        st.session_state.advance_amount = float(advance_val) if advance_val not in (None, "") else 0.0
                     except ValueError:
                         st.session_state.advance_amount = 0.0
                     st.session_state.total_amount = st.session_state.balance_amount + st.session_state.advance_amount
                     with col_total:
                         st.metric("💰 Total Amount", f"₹{st.session_state.total_amount:.2f}")
-                    # Row 4: Payment Mode
-                    st.markdown("#### 💰 Payment Information")
-                    payment_method = st.selectbox("Payment Mode *", ["COD", "Prepaid"], index=0 if st.session_state["order_form_extracted"].get("payment_method", "COD").upper() != "PREPAID" else 1, disabled=st.session_state.creating_order)
-                    # Show current amounts in form (read-only display)
-                        # Removed duplicate read-only amount boxes
+                    # Enable Create Order button only if all required fields are filled and total_amount > 0
+                    required_fields_filled = all([
+                        customer_name,
+                        phone,
+                        address,
+                        city,
+                        pincode,
+                        product,
+                        st.session_state.total_amount > 0
+                    ])
                     submitted = st.form_submit_button(
                         "🛒 Create Order", 
                         width='stretch', 
                         type="primary", 
-                        disabled=st.session_state.creating_order or st.session_state.total_amount <= 0
+                        disabled=st.session_state.creating_order or not required_fields_filled
                     )
                     if submitted:
                         # Set loading state
