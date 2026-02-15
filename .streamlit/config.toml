@@ -1,3 +1,6 @@
+[global]
+dataFrameSerialization = "arrow"
+
 [server]
 headless = true
 enableCORS = false
